@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     VERSION: str = "1.0.0"
     API_V1_STR: str = "/api/v1"
     
-    DATABASE_URL: str = "postgresql://moremoney:moremoney123@localhost:5432/moremoney_db"
+    DATABASE_URL: str = "postgresql://moremoney:moremoney123@localhost:5433/moremoney_db"
     
     REDIS_URL: str = "redis://localhost:6379"
     

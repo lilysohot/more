@@ -132,12 +132,12 @@ const RegisterPage: React.FC = () => {
             name="password"
             rules={[
               { required: true, message: '请输入密码' },
-              { min: 6, message: '密码至少6位' },
+              { min: 6, message: '密码至少 6 位' },
             ]}
           >
             <Input.Password
               prefix={<LockOutlined />}
-              placeholder="密码（至少6位）"
+              placeholder="密码（至少 6 位）"
               size="large"
             />
           </Form.Item>

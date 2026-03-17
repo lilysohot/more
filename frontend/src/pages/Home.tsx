@@ -10,8 +10,6 @@ import {
   Select, 
   Checkbox, 
   message,
-  Modal,
-  Spin,
 } from 'antd';
 import { SearchOutlined, SettingOutlined, LoadingOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
@@ -28,8 +26,7 @@ const HomePage: React.FC = () => {
   const [inputValue, setInputValue] = useState('');
   const [includeCharts, setIncludeCharts] = useState(true);
   const [selectedConfigId, setSelectedConfigId] = useState<string | undefined>(undefined);
-  const [showConfigModal, setShowConfigModal] = useState(false);
-  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const {
     currentAnalysis,
@@ -129,14 +126,6 @@ const HomePage: React.FC = () => {
       pollIntervalRef.current = null;
     }
     message.info('已取消当前分析');
-  };
-
-  const getCurrentModelDisplay = () => {
-    if (selectedConfigId) {
-      const config = configs.find((c: APIConfig) => c.id === selectedConfigId);
-      return config ? `${config.model_name} (${config.provider})` : '系统默认模型';
-    }
-    return '系统默认模型';
   };
 
   return (

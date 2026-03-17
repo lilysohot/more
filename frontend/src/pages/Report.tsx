@@ -10,7 +10,6 @@ import {
   Empty,
 } from 'antd';
 import { 
-  DownloadOutlined, 
   ShareAltOutlined, 
   FileMarkdownOutlined,
   CodeOutlined,
@@ -20,7 +19,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useAnalysisStore } from '@/store/analysisStore';
 import ReactMarkdown from 'react-markdown';
 
-const { Title, Text } = Typography;
+const { Title } = Typography;
 const { TabPane } = Tabs;
 
 const ReportPage: React.FC = () => {
