@@ -10,6 +10,7 @@ from app.schemas.api_config import (
 )
 from app.services.auth import APIConfigService
 from app.api.deps import get_current_user
+from app.core.config import settings
 
 router = APIRouter()
 
@@ -103,12 +104,7 @@ async def test_config(
     try:
         base_url = test_data.base_url
         if not base_url:
-            provider_urls = {
-                "dashscope": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-                "openai": "https://api.openai.com/v1",
-                "claude": "https://api.anthropic.com/v1",
-            }
-            base_url = provider_urls.get(test_data.provider.lower())
+            base_url = settings.LLM_PROVIDER_URLS.get(test_data.provider.lower())
         
         if not base_url:
             return APIConfigTestResult(

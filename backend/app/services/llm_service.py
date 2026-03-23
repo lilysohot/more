@@ -238,7 +238,8 @@ class LLMService:
         
         API 文档: https://help.aliyun.com/document_detail/2712195.html
         """
-        url = self.base_url or "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation"
+        from app.core.config import settings
+        url = self.base_url or settings.LLM_PROVIDER_URLS.get("dashscope")
         
         headers = {
             "Content-Type": "application/json",

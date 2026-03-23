@@ -27,10 +27,35 @@ from app.schemas.analysis import (
     ReportResponse,
     AnalysisListResponse,
 )
-from app.services.analysis import AnalysisService
+from app.services.analysis import AnalysisService, get_active_tasks
 from app.utils.encryption import decrypt_api_key
 
 router = APIRouter()
+
+
+@router.get("/active-tasks")
+async def list_active_tasks(
+    current_user: User = Depends(get_current_user),
+):
+    """
+    获取当前活跃的分析任务列表
+    
+    参数:
+        current_user: 当前登录用户
+    
+    返回:
+        活跃任务列表，包含任务ID、公司名称、当前步骤、开始时间等
+    """
+    all_tasks = get_active_tasks()
+    user_tasks = {
+        task_id: task_info
+        for task_id, task_info in all_tasks.items()
+        if task_info["user_id"] == str(current_user.id)
+    }
+    return {
+        "total": len(user_tasks),
+        "tasks": user_tasks,
+    }
 
 
 @router.post("", response_model=AnalysisResponse, status_code=status.HTTP_201_CREATED)
@@ -66,7 +91,7 @@ async def create_analysis(
     await db.commit()
     await db.refresh(analysis)
 
-    service = AnalysisService(db)
+    service = AnalysisService()
     background_tasks.add_task(
         service.run_analysis,
         analysis_id=str(analysis.id),

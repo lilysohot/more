@@ -77,15 +77,35 @@ class DataCollector:
             "stock_code": stock_code,
             "exchange": None,
             "industry": None,
-            "revenue": None,
-            "net_profit": None,
-            "gross_margin": None,
-            "asset_liability_ratio": None,
-            "operating_cash_flow": None,
-            "roe": None,
-            "market_cap": None,
-            "pe_ratio": None,
-            "pb_ratio": None,
+            # 盈利能力
+            "revenue": None,            # 营业收入
+            "net_profit": None,        # 净利润
+            "gross_margin": None,     # 毛利率
+            "net_margin": None,       # 净利率
+            "roe": None,              # 净资产收益率
+            "roa": None,              # 总资产收益率
+            # 财务结构
+            "total_assets": None,      # 总资产
+            "total_liabilities": None, # 总负债
+            "equity": None,            # 股东权益
+            "asset_liability_ratio": None,  # 资产负债率
+            "debt_to_equity": None,    # 负债权益比
+            # 偿债能力
+            "current_assets": None,    # 流动资产
+            "current_liabilities": None,  # 流动负债
+            "current_ratio": None,    # 流动比率
+            "quick_ratio": None,      # 速动比率
+            # 现金流
+            "operating_cash_flow": None,  # 经营现金流
+            "investing_cash_flow": None,  # 投资现金流
+            "financing_cash_flow": None,  # 融资现金流
+            "operating_cash_flow_to_net_profit": None,  # 经营现金流/净利润
+            # 估值指标
+            "market_cap": None,       # 总市值
+            "pe_ratio": None,         # 市盈率
+            "pb_ratio": None,         # 市净率
+            "ps_ratio": None,         # 市销率
+            # 元数据
             "data_source": "网络搜索",
             "data_date": datetime.now().strftime("%Y-%m-%d"),
         }
@@ -126,13 +146,18 @@ class DataCollector:
                 data = response.json()
                 
                 # 遍历搜索结果，寻找匹配的公司
-                if data.get("Data"):
-                    for item in data["Data"]:
+                # 支持两种结构: {"Data": [...]} 或 {"QuotationCodeTable": {"Data": [...]}}
+                result_data = data.get("QuotationCodeTable", {} ).get("Data")
+                # if not result_data and "QuotationCodeTable" in data:
+                #     result_data = data["QuotationCodeTable"].get("Data")
+                
+                if result_data:
+                    for item in result_data:
                         code = item.get("Code", "")
                         name = item.get("Name", "")
                         if company_name in name or name in company_name:
                             return code
-                
+
         except Exception as e:
             logger.warning(f"Failed to search stock code: {e}")
         
@@ -160,10 +185,11 @@ class DataCollector:
                 secid = f"0.{stock_code}"  # 深圳交易所
             
             async with httpx.AsyncClient(timeout=10) as client:
+                # 获取基本行情数据
                 url = "https://push2.eastmoney.com/api/qt/stock/get"
                 params = {
                     "secid": secid,
-                    "fields": "f57,f58,f84,f85,f116,f117,f162,f167,f92,f173,f187,f105,f190",
+                    "fields": "f57,f58,f84,f85,f116,f117,f162,f167,f92,f173,f187,f105,f190,f44,f45,f46,f47,f48,f49,f50,f51,f52,f53,f54,f55,f56,f57,f58,f84,f85,f116,f117",
                 }
                 response = await client.get(url, params=params, headers=self.headers)
                 data = response.json()
@@ -171,24 +197,102 @@ class DataCollector:
                 if data.get("data"):
                     d = data["data"]
                     info["exchange"] = "SH" if stock_code.startswith(("6", "9")) else "SZ"
-                    info["market_cap"] = d.get("f116")  # 总市值
+                    info["industry"] = d.get("f84")  # 所属行业
+                    # 估值指标
+                    info["market_cap"] = d.get("f116")  # 总市值（元）
                     info["pe_ratio"] = d.get("f162")    # 市盈率
                     info["pb_ratio"] = d.get("f167")    # 市净率
+                    # 财务数据（如果API返回）
+                    info["total_assets"] = d.get("f84")   # 总资产（部分API）
+                    info["total_liabilities"] = d.get("f85")  # 总负债
+                    info["roe"] = d.get("f162")          # 净资产收益率（需要确认字段）
+                    info["gross_margin"] = d.get("f234") if d.get("f234") else None  # 毛利率
+                    info["net_profit"] = d.get("f116") if d.get("f116") else None  # 净利润
                     
         except Exception as e:
             logger.warning(f"Failed to get stock info from eastmoney: {e}")
         
-        # 尝试获取财务数据（预留接口）
-        try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                url = "https://emweb.eastmoney.com/PC_HSF10/NewFinanceAnalysis/Index"
-                params = {"code": stock_code}
-                response = await client.get(url, params=params, headers=self.headers)
-                
-        except Exception as e:
-            logger.warning(f"Failed to get financial data: {e}")
+        # 获取财务摘要数据（总资产、总负债、资产负债率等）
+        await self._get_financial_summary(stock_code, info)
         
         return info
+    
+    async def _get_financial_summary(self, stock_code: str, info: dict):
+        """
+        获取财务摘要数据
+        
+        从东方财富API获取财务摘要，包括总资产、总负债、净资产等
+        
+        参数:
+            stock_code: 股票代码
+            info: 已有信息字典，将更新此字典
+        """
+        try:
+            # 东方财富财务摘要API
+            async with httpx.AsyncClient(timeout=15) as client:
+                url = "https://emweb.eastmoney.com/PC_HSF10/NewFinanceAnalysis/ZYZBAjaxNew"
+                params = {"type": "0", "code": stock_code}
+                response = await client.get(url, params=params, headers=self.headers)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    if data and data.get("data"):
+                        zyzb_data = data["data"]
+                        if zyzb_data:
+                            # 取最近一期数据
+                            latest = zyzb_data[0] if zyzb_data else {}
+                            info["total_assets"] = latest.get("totalAssets")  # 总资产
+                            info["total_liabilities"] = latest.get("totalLiabilities")  # 总负债
+                            info["equity"] = latest.get("shareholderEquity")  # 股东权益
+                            
+                            # 资产负债率
+                            if latest.get("assetLiabilityRatio"):
+                                info["asset_liability_ratio"] = float(latest.get("assetLiabilityRatio"))
+                            
+                            # 计算负债权益比
+                            if info.get("total_liabilities") and info.get("equity"):
+                                try:
+                                    info["debt_to_equity"] = (
+                                        info["total_liabilities"] / info["equity"]
+                                    ) * 100
+                                except (TypeError, ZeroDivisionError):
+                                    pass
+                            
+                            logger.info(f"获取财务摘要成功: {stock_code}")
+        except Exception as e:
+            logger.warning(f"Failed to get financial summary for {stock_code}: {e}")
+        
+        # 获取偿债能力数据（流动比率、速动比率）
+        await self._get_solvency_data(stock_code, info)
+    
+    async def _get_solvency_data(self, stock_code: str, info: dict):
+        """
+        获取偿债能力数据
+        
+        从东方财富API获取流动比率、速动比率等
+        
+        参数:
+            stock_code: 股票代码
+            info: 已有信息字典，将更新此字典
+        """
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                # 偿债能力API
+                url = "https://emweb.eastmoney.com/PC_HSF10/NewFinanceAnalysis/CzjlAjaxNew"
+                params = {"type": "0", "code": stock_code}
+                response = await client.get(url, params=params, headers=self.headers)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    if data and data.get("data"):
+                        czjl_data = data["data"]
+                        if czjl_data:
+                            latest = czjl_data[0] if czjl_data else {}
+                            info["current_ratio"] = latest.get("currentRatio")  # 流动比率
+                            info["quick_ratio"] = latest.get("quickRatio")      # 速动比率
+                            logger.info(f"获取偿债能力数据成功: {stock_code}")
+        except Exception as e:
+            logger.warning(f"Failed to get solvency data for {stock_code}: {e}")
 
     async def calculate_ratios(self, company_data: dict) -> dict:
         """
@@ -204,31 +308,81 @@ class DataCollector:
         
         计算公式:
             - 净利率 = 净利润 / 营业收入 * 100
+            - 毛利率 = (营业收入 - 营业成本) / 营业收入 * 100
+            - ROE = 净利润 / 股东权益 * 100
+            - ROA = 净利润 / 总资产 * 100
+            - 流动比率 = 流动资产 / 流动负债
+            - 速动比率 = (流动资产 - 存货) / 流动负债
+            - 负债权益比 = 总负债 / 股东权益 * 100
+            - 资产负债率 = 总负债 / 总资产 * 100
             - 经营现金流/净利润 = 经营现金流 / 净利润 * 100
         """
         ratios = {
-            "gross_margin": company_data.get("gross_margin"),
-            "net_margin": None,
-            "roe": company_data.get("roe"),
-            "roa": None,
-            "current_ratio": None,
-            "quick_ratio": None,
-            "debt_to_equity": None,
-            "asset_liability_ratio": company_data.get("asset_liability_ratio"),
-            "operating_cash_flow_to_net_profit": None,
+            # 盈利能力比率
+            "gross_margin": company_data.get("gross_margin"),  # 毛利率
+            "net_margin": None,                                 # 净利率
+            "roe": company_data.get("roe"),                     # 净资产收益率
+            "roa": None,                                        # 总资产收益率
+            # 财务结构比率
+            "debt_to_equity": company_data.get("debt_to_equity"),  # 负债权益比
+            "asset_liability_ratio": company_data.get("asset_liability_ratio"),  # 资产负债率
+            # 偿债能力比率
+            "current_ratio": company_data.get("current_ratio"),  # 流动比率
+            "quick_ratio": company_data.get("quick_ratio"),    # 速动比率
+            # 现金流比率
+            "operating_cash_flow_to_net_profit": None,          # 经营现金流/净利润
         }
         
-        # 计算净利率
-        if company_data.get("revenue") and company_data.get("net_profit"):
-            ratios["net_margin"] = (
-                company_data["net_profit"] / company_data["revenue"]
-            ) * 100
+        # 提取关键数据，避免重复获取
+        revenue = company_data.get("revenue")
+        net_profit = company_data.get("net_profit")
+        total_assets = company_data.get("total_assets")
+        equity = company_data.get("equity")
+        current_assets = company_data.get("current_assets")
+        current_liabilities = company_data.get("current_liabilities")
+        operating_cash_flow = company_data.get("operating_cash_flow")
         
-        # 计算经营现金流/净利润
-        if company_data.get("operating_cash_flow") and company_data.get("net_profit"):
-            if company_data["net_profit"] != 0:
-                ratios["operating_cash_flow_to_net_profit"] = (
-                    company_data["operating_cash_flow"] / company_data["net_profit"]
-                ) * 100
+        # 1. 计算净利率 = 净利润 / 营业收入 * 100
+        if net_profit and revenue and revenue > 0:
+            ratios["net_margin"] = (net_profit / revenue) * 100
         
+        # 2. 计算 ROA (总资产收益率) = 净利润 / 总资产 * 100
+        if net_profit and total_assets and total_assets > 0:
+            ratios["roa"] = (net_profit / total_assets) * 100
+        
+        # 3. 计算毛利率（如果未直接提供）
+        # 毛利率需要 (revenue - cost_of_goods_sold) / revenue，但我们通常只有 gross_margin
+        # 如果 gross_margin 为空，尝试通过其他方式估算或设为 None
+        if ratios["gross_margin"] is None and company_data.get("gross_margin") is not None:
+            ratios["gross_margin"] = company_data["gross_margin"]
+        
+        # 4. 计算经营现金流/净利润比率
+        if operating_cash_flow and net_profit and net_profit != 0:
+            ratios["operating_cash_flow_to_net_profit"] = (
+                operating_cash_flow / abs(net_profit)
+            ) * 100  # 乘以100转为百分比
+        
+        # 5. 计算负债权益比（如果未从API获取）
+        if ratios["debt_to_equity"] is None:
+            total_liabilities = company_data.get("total_liabilities")
+            if total_liabilities and equity and equity > 0:
+                ratios["debt_to_equity"] = (total_liabilities / equity) * 100
+        
+        # 6. 计算资产负债率（如果未从API获取）
+        if ratios["asset_liability_ratio"] is None:
+            total_liabilities = company_data.get("total_liabilities")
+            if total_liabilities and total_assets and total_assets > 0:
+                ratios["asset_liability_ratio"] = (total_liabilities / total_assets) * 100
+        
+        # 7. 如果流动比率和速动比率为None，但有流动资产和流动负债数据，则计算
+        if current_assets is not None and current_liabilities is not None and current_liabilities > 0:
+            if ratios["current_ratio"] is None:
+                ratios["current_ratio"] = current_assets / current_liabilities
+            # 速动比率需要存货数据，这里先保留原值或设为 None
+            if ratios["quick_ratio"] is None:
+                # 假设存货为流动资产的 20%（如果未提供）
+                inventory = company_data.get("inventory") or (current_assets * 0.2 if current_assets else 0)
+                ratios["quick_ratio"] = (current_assets - inventory) / current_liabilities
+        
+        logger.info(f"Calculated financial ratios: {ratios}")
         return ratios
