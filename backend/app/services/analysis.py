@@ -200,23 +200,49 @@ class AnalysisService:
         logger.info(f"[Task {analysis_id}] Starting analysis for company: {company_name}")
 
         try:
-            # 步骤1: 采集公司数据
-            logger.info(f"[Task {analysis_id}] Step 1/6: Collecting company data")
+            # 步骤1: 使用模拟数据（跳过数据采集）
+            # TODO: 后续可以让 LLM 直接通过搜索API获取最新数据
+            logger.info(f"[Task {analysis_id}] Step 1/6: Skipping data collection (using mock data)")
             task_info["current_step"] = "collecting_data"
             _update_active_task(analysis_id, task_info)
             await self._update_status(analysis_id, "collecting_data")
+            # collector = DataCollector()
+            # company_data = await collector.collect(company_name, stock_code)
+            # 使用模拟数据进行测试
+            company_data = {
+                "company_name": company_name,
+                "stock_code": stock_code,
+                "industry": "未知",
+                "exchange": "未知",
+                "revenue": 0,
+                "net_profit": 0,
+                "gross_margin": 0.0,
+                "asset_liability_ratio": 0.0,
+                "operating_cash_flow": 0,
+                "roe": 0.0,
+                "market_cap": 0,
+                "pe_ratio": 0.0,
+                "pb_ratio": 0.0,
+            }
+            logger.info(f"[Task {analysis_id}] Step 1/6 completed: Using mock data for {company_name}")
             
-            collector = DataCollector()
-            company_data = await collector.collect(company_name, stock_code)
-            logger.info(f"[Task {analysis_id}] Step 1/6 completed: Data collected")
-            
-            # 步骤2: 计算财务比率
-            logger.info(f"[Task {analysis_id}] Step 2/6: Calculating financial ratios")
+            # 步骤2: 跳过财务比率计算
+            logger.info(f"[Task {analysis_id}] Step 2/6: Skipping ratio calculation (using mock ratios)")
             task_info["current_step"] = "calculating_ratios"
             _update_active_task(analysis_id, task_info)
             await self._update_status(analysis_id, "calculating_ratios")
-            financial_ratios = await collector.calculate_ratios(company_data)
-            logger.info(f"[Task {analysis_id}] Step 2/6 completed: Ratios calculated")
+            financial_ratios = {
+                "gross_margin": 0.0,
+                "net_margin": 0.0,
+                "roe": 0.0,
+                "roa": 0.0,
+                "current_ratio": 0.0,
+                "quick_ratio": 0.0,
+                "debt_to_equity": 0.0,
+                "asset_liability_ratio": 0.0,
+                "operating_cash_flow_to_net_profit": 0.0,
+            }
+            logger.info(f"[Task {analysis_id}] Step 2/6 completed: Using mock ratios")
             
             # 步骤3: 生成提示词（状态更新）
             logger.info(f"[Task {analysis_id}] Step 3/6: Generating prompt")

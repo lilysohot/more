@@ -197,17 +197,16 @@ class DataCollector:
                 if data.get("data"):
                     d = data["data"]
                     info["exchange"] = "SH" if stock_code.startswith(("6", "9")) else "SZ"
-                    info["industry"] = d.get("f84")  # 所属行业
+                    # 注意：东方财富行情API (push2.eastmoney.com) 中没有行业字段
+                    # f84/f85 是数值字段（总资产等），不是行业信息
+                    # 行业信息需要通过其他API获取，暂时设为 None
+                    info["industry"] = None
                     # 估值指标
                     info["market_cap"] = d.get("f116")  # 总市值（元）
                     info["pe_ratio"] = d.get("f162")    # 市盈率
                     info["pb_ratio"] = d.get("f167")    # 市净率
-                    # 财务数据（如果API返回）
-                    info["total_assets"] = d.get("f84")   # 总资产（部分API）
-                    info["total_liabilities"] = d.get("f85")  # 总负债
-                    info["roe"] = d.get("f162")          # 净资产收益率（需要确认字段）
-                    info["gross_margin"] = d.get("f234") if d.get("f234") else None  # 毛利率
-                    info["net_profit"] = d.get("f116") if d.get("f116") else None  # 净利润
+                    # 注意：f84/f85/f162 在东方财富行情API中不是财务数据
+                    # 财务数据将通过 _get_financial_summary 和 _get_solvency_data 获取
                     
         except Exception as e:
             logger.warning(f"Failed to get stock info from eastmoney: {e}")

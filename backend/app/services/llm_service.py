@@ -116,7 +116,7 @@ class LLMService:
         self.provider = config.get("provider", "dashscope")
         self.api_key = config.get("api_key")
         self.base_url = config.get("base_url")
-        self.model_version = config.get("model_version", "qwen-turbo")
+        self.model_version = config.get("model_version")
 
     async def analyze(self, company_data: dict, financial_ratios: dict) -> str:
         """
@@ -239,31 +239,36 @@ class LLMService:
         API 文档: https://help.aliyun.com/document_detail/2712195.html
         """
         from app.core.config import settings
-        url = self.base_url or settings.LLM_PROVIDER_URLS.get("dashscope")
+        # 直接使用完整的 chat/completions 端点
+        base_url = self.base_url or settings.LLM_PROVIDER_URLS.get("dashscope")
+        url = base_url.rstrip("/") + "/chat/completions"
+        
+        logger.info(f"DashScope API URL: {url}")
+        logger.info(f"DashScope API Model: {self.model_version}")
         
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
         }
         
+        # 新版 API 格式（/compatible-mode/v1/chat/completions）
         payload = {
             "model": self.model_version,
-            "input": {
-                "messages": [
-                    {"role": "user", "content": prompt}
-                ]
-            },
-            "parameters": {
-                "max_tokens": 4000,
-                "temperature": 0.7,
-            }
+            "messages": [
+                {"role": "user", "content": prompt}
+            ],
+            "max_tokens": 4000,
+            "temperature": 0.7,
         }
+        
+        logger.info(f"DashScope API Payload: {payload}")
         
         async with httpx.AsyncClient(timeout=120) as client:
             response = await client.post(url, headers=headers, json=payload)
+            logger.info(f"DashScope API Response Status: {response.status_code}")
             response.raise_for_status()
             data = response.json()
-            return data["output"]["text"]
+            return data["choices"][0]["message"]["content"]
 
     async def _call_openai(self, prompt: str) -> str:
         """
