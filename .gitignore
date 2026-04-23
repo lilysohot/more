@@ -22,7 +22,7 @@ config.py
 # Environment
 .env
 .env.local
-.gents/
+.agents/
 # Logs
 logs/
 *.log
