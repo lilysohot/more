@@ -15,11 +15,14 @@ npm-debug.log*
 
 # Build
 dist/
-
+# config files
+config/
+config.json
+config.py
 # Environment
 .env
 .env.local
-
+.gents/
 # Logs
 logs/
 *.log
