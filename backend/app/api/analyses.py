@@ -81,23 +81,34 @@ async def create_analysis(
         - 分析任务在后台异步执行
         - 用户可选择使用自己的 API 配置或系统默认模型
     """
+    service = AnalysisService()
+    try:
+        resolved_target = await service.resolve_analysis_target(
+            company_name=data.company_name,
+            stock_code=data.stock_code,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
     analysis = Analysis(
         user_id=current_user.id,
-        company_name=data.company_name,
-        stock_code=data.stock_code,
+        company_name=resolved_target["company_name"],
+        stock_code=resolved_target["stock_code"],
         status="pending",
     )
     db.add(analysis)
     await db.commit()
     await db.refresh(analysis)
 
-    service = AnalysisService()
     background_tasks.add_task(
         service.run_analysis,
         analysis_id=str(analysis.id),
         user_id=str(current_user.id),
-        company_name=data.company_name,
-        stock_code=data.stock_code,
+        company_name=resolved_target["company_name"],
+        stock_code=resolved_target["stock_code"],
         include_charts=data.include_charts,
         api_config_id=str(data.api_config_id) if data.api_config_id else None,
     )
@@ -193,11 +204,13 @@ async def get_analysis_progress(
         current_user: 当前登录用户
     
     返回:
-        AnalysisProgress: 包含状态、进度百分比、进度消息
+        AnalysisProgress: 包含状态、阶段、进度百分比、进度消息
     
     说明:
         进度状态包括: pending, collecting_data, calculating_ratios,
-        generating_prompt, calling_llm, generating_report, completed, failed
+        building_context, running_munger_agent, running_industry_agent,
+        running_audit_agent, running_synthesis_agent,
+        generating_report, saving_report, completed, failed
     """
     result = await db.execute(
         select(Analysis).where(
@@ -216,6 +229,7 @@ async def get_analysis_progress(
     return {
         "analysis_id": analysis.id,
         "status": analysis.status,
+        "progress_stage": _get_progress_stage(analysis.status),
         "progress": _get_progress_percentage(analysis.status),
         "message": _get_progress_message(analysis.status),
     }
@@ -323,15 +337,20 @@ def _get_progress_percentage(status: str) -> int:
     """
     progress_map = {
         "pending": 0,
-        "collecting_data": 20,
-        "calculating_ratios": 40,
-        "generating_prompt": 50,
-        "calling_llm": 60,
-        "generating_report": 80,
+        "collecting_data": 10,
+        "calculating_ratios": 20,
+        "building_context": 35,
+        "running_munger_agent": 50,
+        "running_industry_agent": 60,
+        "running_audit_agent": 70,
+        "running_synthesis_agent": 80,
+        "generating_report": 90,
+        "saving_report": 95,
         "completed": 100,
         "failed": 0,
     }
-    return progress_map.get(status, 0)
+    progress_stage = _get_progress_stage(status)
+    return progress_map.get(progress_stage, 0)
 
 
 def _get_progress_message(status: str) -> str:
@@ -348,10 +367,32 @@ def _get_progress_message(status: str) -> str:
         "pending": "准备开始分析...",
         "collecting_data": "正在采集公司数据...",
         "calculating_ratios": "正在计算财务比率...",
-        "generating_prompt": "正在生成分析提示词...",
-        "calling_llm": "正在执行三维合一分析...",
+        "building_context": "正在构建分析上下文...",
+        "running_munger_agent": "正在执行芒格角色分析...",
+        "running_industry_agent": "正在执行产业角色分析...",
+        "running_audit_agent": "正在执行审计角色分析...",
+        "running_synthesis_agent": "正在汇总多角色分析结果...",
         "generating_report": "正在生成分析报告...",
+        "saving_report": "正在保存分析报告...",
         "completed": "分析完成！",
         "failed": "分析失败，请重试",
     }
-    return message_map.get(status, "处理中...")
+    progress_stage = _get_progress_stage(status)
+    return message_map.get(progress_stage, "处理中...")
+
+
+def _get_progress_stage(status: str) -> str:
+    """
+    兼容旧状态值并返回标准化的阶段名称。
+
+    参数:
+        status: 分析状态字符串
+
+    返回:
+        str: 标准化后的进度阶段
+    """
+    alias_map = {
+        "generating_prompt": "building_context",
+        "calling_llm": "running_munger_agent",
+    }
+    return alias_map.get(status, status)

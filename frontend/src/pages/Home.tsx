@@ -21,6 +21,21 @@ const { Title, Paragraph, Text } = Typography;
 const { Panel } = Collapse;
 const { Option } = Select;
 
+const PROGRESS_STAGE_LABELS: Record<string, string> = {
+  pending: '准备中',
+  collecting_data: '数据采集',
+  calculating_ratios: '财务比率计算',
+  building_context: '分析上下文构建',
+  running_munger_agent: '芒格角色分析',
+  running_industry_agent: '产业角色分析',
+  running_audit_agent: '审计角色分析',
+  running_synthesis_agent: '汇总分析',
+  generating_report: '报告生成',
+  saving_report: '报告保存',
+  completed: '已完成',
+  failed: '失败',
+};
+
 const HomePage: React.FC = () => {
   const navigate = useNavigate();
   const [inputValue, setInputValue] = useState('');
@@ -107,13 +122,16 @@ const HomePage: React.FC = () => {
     }
 
     try {
-      await startAnalysis({
+      const analysis = await startAnalysis({
         company_name: companyName,
         stock_code: stockCode,
         include_charts: includeCharts,
         api_config_id: selectedConfigId,
       });
-      message.success('分析任务已创建，正在处理中...');
+      const displayName = analysis.stock_code
+        ? `${analysis.company_name}（${analysis.stock_code}）`
+        : analysis.company_name;
+      message.success(`已识别为 ${displayName}，分析任务已创建，正在处理中...`);
     } catch (err) {
       console.error('Failed to start analysis:', err);
     }
@@ -241,6 +259,10 @@ const HomePage: React.FC = () => {
                 percent={progress.progress} 
                 status={progress.status === 'failed' ? 'exception' : 'active'}
               />
+              <Text type="secondary">
+                当前阶段：
+                {PROGRESS_STAGE_LABELS[progress.progress_stage || progress.status] || (progress.progress_stage || progress.status)}
+              </Text>
               <Text type="secondary">{progress.message}</Text>
             </div>
           </Card>

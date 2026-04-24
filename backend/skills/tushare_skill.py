@@ -27,8 +27,10 @@ Tushare Skill Module
     valuation_data = await skill.get_valuation_data("600089")
 """
 
+import asyncio
 import logging
-from typing import Optional, Dict, Any, List
+import os
+from typing import Optional, Dict, Any
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -65,9 +67,98 @@ class TushareSkill:
                   免费版不需要token，但功能受限
                   Pro版需要申请：https://tushare.pro/
         """
-        self.token = token
+        self.token = token or os.getenv("TUSHARE_TOKEN")
         self.api = None
         self.is_initialized = False
+        self._stock_basic_cache = None
+
+    @staticmethod
+    def _to_ts_code(stock_code: str) -> str:
+        """Normalize plain stock code to Tushare ts_code format."""
+        if not stock_code:
+            return ""
+
+        normalized = str(stock_code).strip().upper()
+        if "." in normalized:
+            return normalized
+
+        if normalized.startswith(("6", "9")):
+            return f"{normalized}.SH"
+
+        return f"{normalized}.SZ"
+
+    @staticmethod
+    def _to_stock_code(stock_code: str) -> str:
+        """Extract 6-digit stock code from ts_code/plain code."""
+        if not stock_code:
+            return ""
+        return str(stock_code).split(".")[0].strip()
+
+    @staticmethod
+    def _to_exchange(ts_code: str) -> Optional[str]:
+        if not ts_code or "." not in ts_code:
+            return None
+
+        suffix = ts_code.split(".")[-1].upper()
+        if suffix == "SH":
+            return "SH"
+        if suffix == "SZ":
+            return "SZ"
+        return suffix
+
+    async def resolve_stock(self, stock_code: str = None, company_name: str = None) -> Dict[str, Any]:
+        """Resolve stock identity from stock code or company name."""
+        if not self.is_initialized:
+            await self.initialize()
+
+        try:
+            if stock_code:
+                ts_code = self._to_ts_code(stock_code)
+                stock_info = await self.get_stock_info(ts_code)
+                if stock_info:
+                    return stock_info
+
+            if not company_name:
+                return {}
+
+            df = await self._get_stock_basic_cache()
+
+            if df is None or len(df) == 0:
+                return {}
+
+            exact_match = df[df["name"] == company_name]
+            if len(exact_match) == 0:
+                exact_match = df[df["name"].astype(str).str.contains(company_name, na=False)]
+
+            if len(exact_match) == 0:
+                return {}
+
+            row = exact_match.iloc[0]
+            return {
+                "stock_code": row.get("symbol") or self._to_stock_code(row.get("ts_code", "")),
+                "ts_code": row.get("ts_code"),
+                "name": row.get("name"),
+                "area": row.get("area"),
+                "industry": row.get("industry"),
+                "market": row.get("market"),
+                "list_date": row.get("list_date"),
+                "exchange": self._to_exchange(row.get("ts_code")),
+            }
+        except Exception as e:
+            logger.warning(f"解析股票信息失败 stock_code={stock_code} company_name={company_name}: {e}")
+            return {}
+
+    async def _get_stock_basic_cache(self):
+        if self._stock_basic_cache is not None:
+            return self._stock_basic_cache
+
+        df = self.api.stock_basic(
+            exchange="",
+            list_status="L",
+            fields="ts_code,symbol,name,area,industry,market,list_date"
+        )
+        self._stock_basic_cache = df
+        return df
         
     async def initialize(self) -> bool:
         """
@@ -80,10 +171,12 @@ class TushareSkill:
             import tushare as ts
             
             if self.token:
-                # Pro版设置token
                 ts.set_token(self.token)
-                
-            self.api = ts.pro_api(self.token) if self.token else ts.pro_api()
+            else:
+                logger.error("Tushare 初始化失败: 缺少 TUSHARE_TOKEN")
+                return False
+
+            self.api = ts.pro_api(self.token)
             self.is_initialized = True
             logger.info("Tushare Skill 初始化成功")
             return True
@@ -109,22 +202,24 @@ class TushareSkill:
             await self.initialize()
             
         try:
+            ts_code = self._to_ts_code(stock_code)
             # 查询股票基本信息
             df = self.api.stock_basic(
-                ts_code=stock_code,
+                ts_code=ts_code,
                 fields='ts_code,symbol,name,area,industry,market,list_date'
             )
             
             if df is not None and len(df) > 0:
                 row = df.iloc[0]
                 return {
-                    "stock_code": row.get('symbol') or row.get('ts_code', '').split('.')[0],
+                    "stock_code": row.get('symbol') or self._to_stock_code(row.get('ts_code', '')),
                     "ts_code": row.get('ts_code'),
                     "name": row.get('name'),
                     "area": row.get('area'),
                     "industry": row.get('industry'),
                     "market": row.get('market'),
                     "list_date": row.get('list_date'),
+                    "exchange": self._to_exchange(row.get('ts_code')),
                 }
             return {}
             
@@ -148,11 +243,7 @@ class TushareSkill:
             await self.initialize()
             
         try:
-            # 转换股票代码格式
-            if stock_code.startswith('6'):
-                ts_code = f"{stock_code}.SH"
-            else:
-                ts_code = f"{stock_code}.SZ"
+            ts_code = self._to_ts_code(stock_code)
             
             # 获取最新行情
             df = self.api.daily(
@@ -195,18 +286,10 @@ class TushareSkill:
             await self.initialize()
             
         try:
-            # 转换股票代码格式
-            if stock_code.startswith('6'):
-                ts_code = f"{stock_code}.SH"
-            else:
-                ts_code = f"{stock_code}.SZ"
+            ts_code = self._to_ts_code(stock_code)
             
             # 获取财务指标数据
-            df = self.api.financial_data(
-                ts_code=ts_code,
-                start_date='20200101',
-                end_date=datetime.now().strftime('%Y%m%d')
-            )
+            df = self.api.fina_indicator(ts_code=ts_code)
             
             if df is not None and len(df) > 0:
                 # 取最新一期数据
@@ -248,11 +331,7 @@ class TushareSkill:
             await self.initialize()
             
         try:
-            # 转换股票代码格式
-            if stock_code.startswith('6'):
-                ts_code = f"{stock_code}.SH"
-            else:
-                ts_code = f"{stock_code}.SZ"
+            ts_code = self._to_ts_code(stock_code)
             
             # 获取每日指标（包含PE、PB等）
             df = self.api.daily_basic(
@@ -293,11 +372,7 @@ class TushareSkill:
             await self.initialize()
             
         try:
-            # 转换股票代码格式
-            if stock_code.startswith('6'):
-                ts_code = f"{stock_code}.SH"
-            else:
-                ts_code = f"{stock_code}.SZ"
+            ts_code = self._to_ts_code(stock_code)
             
             # 获取资产负债表
             df = self.api.balancesheet_vip(
@@ -338,11 +413,7 @@ class TushareSkill:
             await self.initialize()
             
         try:
-            # 转换股票代码格式
-            if stock_code.startswith('6'):
-                ts_code = f"{stock_code}.SH"
-            else:
-                ts_code = f"{stock_code}.SZ"
+            ts_code = self._to_ts_code(stock_code)
             
             # 获取利润表
             df = self.api.income_vip(
@@ -384,11 +455,7 @@ class TushareSkill:
             await self.initialize()
             
         try:
-            # 转换股票代码格式
-            if stock_code.startswith('6'):
-                ts_code = f"{stock_code}.SH"
-            else:
-                ts_code = f"{stock_code}.SZ"
+            ts_code = self._to_ts_code(stock_code)
             
             # 获取现金流量表
             df = self.api.cashflow_vip(
@@ -414,7 +481,7 @@ class TushareSkill:
             logger.warning(f"获取现金流量表失败 {stock_code}: {e}")
             return {}
     
-    async def collect_all(self, stock_code: str) -> Dict[str, Any]:
+    async def collect_all(self, stock_code: str = None, company_name: str = None) -> Dict[str, Any]:
         """
         采集股票全部数据
         
@@ -428,30 +495,55 @@ class TushareSkill:
         """
         if not self.is_initialized:
             await self.initialize()
-        
-        # 并行采集各类数据
-        stock_info = await self.get_stock_info(stock_code)
-        daily_price = await self.get_daily_price(stock_code)
-        valuation = await self.get_valuation_data(stock_code)
-        financial = await self.get_financial_data(stock_code)
-        balance_sheet = await self.get_balance_sheet(stock_code)
-        income = await self.get_income_statement(stock_code)
-        cash_flow = await self.get_cash_flow(stock_code)
-        
-        # 合并数据
+
+        resolved = await self.resolve_stock(stock_code=stock_code, company_name=company_name)
+        resolved_stock_code = resolved.get("stock_code") or self._to_stock_code(stock_code)
+        resolved_ts_code = resolved.get("ts_code") or self._to_ts_code(resolved_stock_code)
+
+        if not resolved_stock_code:
+            raise ValueError(f"Unable to resolve stock for company_name={company_name} stock_code={stock_code}")
+
+        stock_info, daily_price, valuation, financial, balance_sheet, income, cash_flow = await asyncio.gather(
+            self.get_stock_info(resolved_ts_code),
+            self.get_daily_price(resolved_stock_code),
+            self.get_valuation_data(resolved_stock_code),
+            self.get_financial_data(resolved_stock_code),
+            self.get_balance_sheet(resolved_stock_code),
+            self.get_income_statement(resolved_stock_code),
+            self.get_cash_flow(resolved_stock_code),
+        )
+
         result = {
-            **stock_info,
-            **daily_price,
-            **valuation,
-            **financial,
-            **balance_sheet,
-            **income,
-            **cash_flow,
+            "company_name": stock_info.get("name") or resolved.get("name") or company_name,
+            "stock_code": stock_info.get("stock_code") or resolved_stock_code,
+            "ts_code": stock_info.get("ts_code") or resolved_ts_code,
+            "exchange": stock_info.get("exchange") or resolved.get("exchange"),
+            "industry": stock_info.get("industry") or resolved.get("industry"),
+            "revenue": income.get("revenue"),
+            "net_profit": income.get("net_profit"),
+            "gross_margin": financial.get("gross_profit_rate"),
+            "net_margin": financial.get("net_profit_ratio"),
+            "roe": financial.get("roe"),
+            "roa": financial.get("roa"),
+            "total_assets": balance_sheet.get("total_assets"),
+            "total_liabilities": balance_sheet.get("total_liabilities"),
+            "equity": balance_sheet.get("total_equity"),
+            "asset_liability_ratio": balance_sheet.get("asset_liability_ratio"),
+            "current_ratio": financial.get("current_ratio"),
+            "quick_ratio": financial.get("quick_ratio"),
+            "operating_cash_flow": cash_flow.get("operating_cf"),
+            "investing_cash_flow": cash_flow.get("investing_cf"),
+            "financing_cash_flow": cash_flow.get("financing_cf"),
+            "market_cap": valuation.get("total_mv") * 10000 if valuation.get("total_mv") is not None else None,
+            "pe_ratio": valuation.get("pe"),
+            "pb_ratio": valuation.get("pb"),
+            "ps_ratio": valuation.get("ps"),
+            "close_price": daily_price.get("close"),
             "data_source": "tushare",
-            "data_date": datetime.now().strftime("%Y-%m-%d"),
+            "data_date": valuation.get("trade_date") or income.get("report_date") or balance_sheet.get("report_date") or datetime.now().strftime("%Y-%m-%d"),
         }
         
-        logger.info(f"Tushare 数据采集完成: {stock_code}")
+        logger.info(f"Tushare 数据采集完成: {result['stock_code']}")
         return result
 
 

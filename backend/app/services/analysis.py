@@ -4,27 +4,32 @@
 协调整个分析流程的执行，包括：
 1. 数据采集
 2. 财务比率计算
-3. LLM 分析调用
+3. 多 Agent 编排调用
 4. 报告生成
 
 该服务在后台异步执行，通过数据库状态更新进度。
 """
 
 import logging
+import os
+import re
 from datetime import datetime
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from uuid import UUID
 
 from app.database import AsyncSessionLocal
-from app.models.user import Analysis, Report, APIConfig
+from app.models.user import Analysis, Report, APIConfig, AgentRun
+from app.services.agents import AgentContext, AgentOrchestrator, AgentRole, AgentRunStatus, ProgressStage
+from app.services.agents.orchestrator import OrchestrationResult
 from app.services.data_collector import DataCollector
-from app.services.llm_service import LLMService
 from app.services.report_generator import ReportGenerator
 from app.utils.encryption import decrypt_api_key
 from app.core.config import settings
+from skills import get_tushare_skill
 
 logger = logging.getLogger(__name__)
+
+_STOCK_IDENTIFIER_RE = re.compile(r"^(\d{6}|[A-Za-z]{1,5})$")
 
 # Redis key prefix for active tasks
 _ACTIVE_TASKS_KEY = "active_tasks"
@@ -152,6 +157,65 @@ class AnalysisService:
         """
         pass
 
+    @staticmethod
+    def _looks_like_stock_identifier(value: str | None) -> bool:
+        return bool(value and _STOCK_IDENTIFIER_RE.fullmatch(str(value).strip()))
+
+    @staticmethod
+    def _normalize_resolved_target(resolved: dict | None, *, data_source: str) -> dict | None:
+        if not isinstance(resolved, dict):
+            return None
+
+        company_name = str(resolved.get("company_name") or resolved.get("name") or "").strip()
+        stock_code = str(resolved.get("stock_code") or "").strip().upper()
+        if not company_name or not stock_code or company_name == stock_code:
+            return None
+
+        return {
+            "company_name": company_name,
+            "stock_code": stock_code,
+            "exchange": resolved.get("exchange"),
+            "industry": resolved.get("industry"),
+            "data_source": data_source,
+        }
+
+    async def resolve_analysis_target(self, *, company_name: str, stock_code: str | None = None) -> dict:
+        raw_company_name = (company_name or "").strip()
+        raw_stock_code = (stock_code or "").strip().upper() or None
+
+        if not raw_company_name and not raw_stock_code:
+            raise ValueError("请输入公司名称或股票代码")
+
+        if raw_stock_code is None and self._looks_like_stock_identifier(raw_company_name):
+            raw_stock_code = raw_company_name.upper()
+
+        company_name_hint = raw_company_name if raw_company_name and raw_company_name != raw_stock_code else None
+        tushare_token = os.getenv("TUSHARE_TOKEN") or None
+        collector = DataCollector()
+
+        if raw_stock_code:
+            eastmoney_by_code = await collector.resolve_stock(stock_code=raw_stock_code)
+            normalized = self._normalize_resolved_target(eastmoney_by_code, data_source="eastmoney")
+            if normalized is not None:
+                return normalized
+
+        if tushare_token:
+            try:
+                skill = await get_tushare_skill(token=tushare_token)
+                tushare_result = await skill.resolve_stock(stock_code=raw_stock_code, company_name=company_name_hint)
+                normalized = self._normalize_resolved_target(tushare_result, data_source="tushare")
+                if normalized is not None:
+                    return normalized
+            except Exception as e:
+                logger.warning(f"Tushare resolve failed for {raw_company_name} ({raw_stock_code}): {e}")
+
+        eastmoney_result = await collector.resolve_stock(company_name=company_name_hint or raw_company_name)
+        normalized = self._normalize_resolved_target(eastmoney_result, data_source="eastmoney")
+        if normalized is not None:
+            return normalized
+
+        raise ValueError("无法识别输入内容，请输入正确的公司名称或股票代码")
+
     async def run_analysis(
         self,
         analysis_id: str,
@@ -167,9 +231,10 @@ class AnalysisService:
         该方法按顺序执行以下步骤：
         1. 采集公司数据（数据采集服务）
         2. 计算财务比率
-        3. 调用 LLM 执行三维合一分析
-        4. 生成 Markdown 和 HTML 报告
-        5. 保存报告到数据库
+        3. 构建 AgentContext
+        4. 调用 AgentOrchestrator 执行多 Agent 分析
+        5. 生成 Markdown 和 HTML 报告
+        6. 保存报告到数据库
         
         参数:
             analysis_id: 分析记录ID
@@ -200,88 +265,78 @@ class AnalysisService:
         logger.info(f"[Task {analysis_id}] Starting analysis for company: {company_name}")
 
         try:
-            # 步骤1: 使用模拟数据（跳过数据采集）
-            # TODO: 后续可以让 LLM 直接通过搜索API获取最新数据
-            logger.info(f"[Task {analysis_id}] Step 1/6: Skipping data collection (using mock data)")
+            logger.info(f"[Task {analysis_id}] Step 1/6: Collecting company data")
             task_info["current_step"] = "collecting_data"
             _update_active_task(analysis_id, task_info)
             await self._update_status(analysis_id, "collecting_data")
-            # collector = DataCollector()
-            # company_data = await collector.collect(company_name, stock_code)
-            # 使用模拟数据进行测试
-            company_data = {
-                "company_name": company_name,
-                "stock_code": stock_code,
-                "industry": "未知",
-                "exchange": "未知",
-                "revenue": 0,
-                "net_profit": 0,
-                "gross_margin": 0.0,
-                "asset_liability_ratio": 0.0,
-                "operating_cash_flow": 0,
-                "roe": 0.0,
-                "market_cap": 0,
-                "pe_ratio": 0.0,
-                "pb_ratio": 0.0,
-            }
-            logger.info(f"[Task {analysis_id}] Step 1/6 completed: Using mock data for {company_name}")
+            company_data = await self._collect_company_data(company_name=company_name, stock_code=stock_code)
+            stock_code = company_data.get("stock_code") or stock_code
+            logger.info(
+                f"[Task {analysis_id}] Step 1/6 completed: Collected {company_data.get('data_source')} data for {company_name} ({stock_code})"
+            )
             
-            # 步骤2: 跳过财务比率计算
-            logger.info(f"[Task {analysis_id}] Step 2/6: Skipping ratio calculation (using mock ratios)")
+            logger.info(f"[Task {analysis_id}] Step 2/6: Calculating financial ratios")
             task_info["current_step"] = "calculating_ratios"
             _update_active_task(analysis_id, task_info)
             await self._update_status(analysis_id, "calculating_ratios")
-            financial_ratios = {
-                "gross_margin": 0.0,
-                "net_margin": 0.0,
-                "roe": 0.0,
-                "roa": 0.0,
-                "current_ratio": 0.0,
-                "quick_ratio": 0.0,
-                "debt_to_equity": 0.0,
-                "asset_liability_ratio": 0.0,
-                "operating_cash_flow_to_net_profit": 0.0,
-            }
-            logger.info(f"[Task {analysis_id}] Step 2/6 completed: Using mock ratios")
+            financial_ratios = await self._calculate_financial_ratios(company_data)
+            logger.info(f"[Task {analysis_id}] Step 2/6 completed: Calculated financial ratios")
             
-            # 步骤3: 生成提示词（状态更新）
-            logger.info(f"[Task {analysis_id}] Step 3/6: Generating prompt")
-            task_info["current_step"] = "generating_prompt"
+            # 步骤3: 构建 AgentContext
+            logger.info(f"[Task {analysis_id}] Step 3/6: Building agent context")
+            task_info["current_step"] = ProgressStage.BUILDING_CONTEXT.value
             _update_active_task(analysis_id, task_info)
-            await self._update_status(analysis_id, "generating_prompt")
-            logger.info(f"[Task {analysis_id}] Step 3/6 completed: Prompt ready")
-            
-            # 步骤4: 调用 LLM 执行分析
-            logger.info(f"[Task {analysis_id}] Step 4/6: Calling LLM for analysis")
-            task_info["current_step"] = "calling_llm"
-            _update_active_task(analysis_id, task_info)
-            await self._update_status(analysis_id, "calling_llm")
-            
+            await self._update_status(analysis_id, ProgressStage.BUILDING_CONTEXT.value)
+            agent_context = self._build_agent_context(
+                analysis_id=analysis_id,
+                company_name=company_name,
+                stock_code=stock_code,
+                company_data=company_data,
+                financial_ratios=financial_ratios,
+            )
+            logger.info(f"[Task {analysis_id}] Step 3/6 completed: Agent context ready")
+
+            # 步骤4: 编排多 Agent 执行
+            logger.info(f"[Task {analysis_id}] Step 4/6: Running multi-agent orchestration")
             llm_config = await self._get_llm_config(user_id, api_config_id)
             logger.info(f"[Task {analysis_id}] Using LLM provider: {llm_config['provider']}")
-            llm_service = LLMService(llm_config)
-            analysis_result = await llm_service.analyze(company_data, financial_ratios)
-            logger.info(f"[Task {analysis_id}] Step 4/6 completed: LLM analysis done")
+
+            async def on_stage(stage: ProgressStage):
+                task_info["current_step"] = stage.value
+                _update_active_task(analysis_id, task_info)
+                await self._update_status(analysis_id, stage.value)
+
+            orchestrator = AgentOrchestrator(llm_config=llm_config, on_stage=on_stage)
+            orchestration_result = await orchestrator.run(agent_context)
+            await self._save_agent_runs(
+                analysis_id=analysis_id,
+                orchestration_result=orchestration_result,
+                llm_config=llm_config,
+            )
+            analysis_result = self._render_orchestration_markdown(orchestration_result)
+            logger.info(f"[Task {analysis_id}] Step 4/6 completed: Multi-agent orchestration done")
             
             # 步骤5: 生成报告
             logger.info(f"[Task {analysis_id}] Step 5/6: Generating report")
-            task_info["current_step"] = "generating_report"
+            task_info["current_step"] = ProgressStage.GENERATING_REPORT.value
             _update_active_task(analysis_id, task_info)
-            await self._update_status(analysis_id, "generating_report")
+            await self._update_status(analysis_id, ProgressStage.GENERATING_REPORT.value)
             
             report_generator = ReportGenerator()
             content_md, content_html = await report_generator.generate(
                 company_data=company_data,
                 financial_ratios=financial_ratios,
                 analysis_result=analysis_result,
+                orchestration_result=orchestration_result,
                 include_charts=include_charts,
             )
             logger.info(f"[Task {analysis_id}] Step 5/6 completed: Report generated")
             
             # 步骤6: 保存报告
             logger.info(f"[Task {analysis_id}] Step 6/6: Saving report to database")
-            task_info["current_step"] = "saving_report"
+            task_info["current_step"] = ProgressStage.SAVING_REPORT.value
             _update_active_task(analysis_id, task_info)
+            await self._update_status(analysis_id, ProgressStage.SAVING_REPORT.value)
             await self._save_report(analysis_id, content_md, content_html)
             
             # 完成
@@ -303,6 +358,142 @@ class AnalysisService:
             _remove_active_task(analysis_id)
             logger.info(f"[Task {analysis_id}] Removed from active tasks")
 
+    def _build_agent_context(
+        self,
+        *,
+        analysis_id: str,
+        company_name: str,
+        stock_code: str | None,
+        company_data: dict,
+        financial_ratios: dict,
+    ) -> AgentContext:
+        return AgentContext(
+            analysis_id=UUID(analysis_id),
+            company_name=company_name,
+            stock_code=stock_code,
+            basic_profile={
+                "industry": company_data.get("industry"),
+                "exchange": company_data.get("exchange"),
+            },
+            financial_data={
+                "revenue": company_data.get("revenue"),
+                "net_profit": company_data.get("net_profit"),
+                "gross_margin": company_data.get("gross_margin"),
+                "roe": company_data.get("roe"),
+                "asset_liability_ratio": company_data.get("asset_liability_ratio"),
+                "operating_cash_flow": company_data.get("operating_cash_flow"),
+            },
+            financial_ratios=financial_ratios,
+            sources=[],
+            data_quality={
+                "is_mock": False,
+                "quality_note": self._build_data_quality_note(company_data),
+            },
+        )
+
+    async def _collect_company_data(self, *, company_name: str, stock_code: str | None) -> dict:
+        """Collect real company data with Tushare as the primary source."""
+        tushare_token = os.getenv("TUSHARE_TOKEN") or None
+
+        try:
+            skill = await get_tushare_skill(token=tushare_token)
+            company_data = await skill.collect_all(stock_code=stock_code, company_name=company_name)
+            if company_data.get("company_name") is None:
+                company_data["company_name"] = company_name
+            if company_data.get("stock_code") is None:
+                company_data["stock_code"] = stock_code
+            company_data["exchange"] = company_data.get("exchange") or None
+            return company_data
+        except Exception as e:
+            logger.warning(f"Tushare collection failed for {company_name} ({stock_code}): {e}")
+
+        logger.info(f"Falling back to EastMoney collector for {company_name} ({stock_code})")
+        collector = DataCollector()
+        company_data = await collector.collect(company_name, stock_code)
+        company_data["company_name"] = company_data.get("company_name") or company_name
+        company_data["stock_code"] = company_data.get("stock_code") or stock_code
+        company_data["data_source"] = company_data.get("data_source") or "eastmoney"
+        return company_data
+
+    async def _calculate_financial_ratios(self, company_data: dict) -> dict:
+        collector = DataCollector()
+        return await collector.calculate_ratios(company_data)
+
+    @staticmethod
+    def _build_data_quality_note(company_data: dict) -> str:
+        missing_fields = [
+            field
+            for field in ("revenue", "net_profit", "gross_margin", "roe", "market_cap", "pe_ratio", "pb_ratio")
+            if company_data.get(field) is None
+        ]
+
+        source = company_data.get("data_source", "unknown")
+        if not missing_fields:
+            return f"Using live data from {source}."
+
+        return f"Using live data from {source}, but missing fields: {', '.join(missing_fields)}."
+
+    def _render_orchestration_markdown(self, orchestration_result: OrchestrationResult) -> str:
+        synthesis = orchestration_result.synthesis_result
+        report_sections = synthesis.report_sections
+        failed_roles = [role.value for role in orchestration_result.failed_roles]
+
+        role_summary: dict[AgentRole, str] = {}
+        for run in orchestration_result.role_runs:
+            if run.result is not None:
+                role_summary[run.role] = run.result.summary
+            elif run.error_message:
+                role_summary[run.role] = f"{run.role.value} role failed: {run.error_message}"
+            else:
+                role_summary[run.role] = f"{run.role.value} role did not return output."
+
+        lines = [
+            "## 多 Agent 综合结论",
+            "",
+            f"- 最终评分：{synthesis.final_score:.2f}/10",
+            f"- 投资结论：{synthesis.investment_decision}",
+            f"- 数据充分性：{'不足' if synthesis.insufficient_data else '可用'}",
+        ]
+
+        if failed_roles:
+            lines.append(f"- 降级执行：角色失败 -> {', '.join(failed_roles)}")
+
+        if synthesis.consensus:
+            lines.extend(["", "### 主要共识"])
+            lines.extend([f"- {item}" for item in synthesis.consensus[:6]])
+
+        if synthesis.major_risks:
+            lines.extend(["", "### 主要风险"])
+            lines.extend([f"- {item}" for item in synthesis.major_risks[:6]])
+
+        if synthesis.disagreements:
+            lines.extend(["", "### 关键分歧"])
+            for item in synthesis.disagreements[:5]:
+                lines.append(
+                    f"- {item.topic}：芒格={item.munger or 'N/A'}；产业={item.industry or 'N/A'}；审计={item.audit or 'N/A'}"
+                )
+
+        lines.extend(
+            [
+                "",
+                "## 角色观点摘要",
+                "",
+                "### 芒格视角",
+                report_sections.munger_view or role_summary.get(AgentRole.MUNGER, "暂无输出"),
+                "",
+                "### 产业视角",
+                report_sections.industry_view or role_summary.get(AgentRole.INDUSTRY, "暂无输出"),
+                "",
+                "### 审计视角",
+                report_sections.audit_view or role_summary.get(AgentRole.AUDIT, "暂无输出"),
+                "",
+                "## 汇总说明",
+                report_sections.synthesis or "未提供额外汇总说明。",
+            ]
+        )
+
+        return "\n".join(lines)
+
     async def _update_status(self, analysis_id: str, status: str):
         """
         更新分析记录的状态
@@ -315,9 +506,13 @@ class AnalysisService:
             - pending: 等待处理
             - collecting_data: 正在采集数据
             - calculating_ratios: 正在计算财务比率
-            - generating_prompt: 正在生成提示词
-            - calling_llm: 正在调用 LLM
+            - building_context: 正在构建 Agent 上下文
+            - running_munger_agent: 正在执行芒格角色
+            - running_industry_agent: 正在执行产业角色
+            - running_audit_agent: 正在执行审计角色
+            - running_synthesis_agent: 正在执行汇总角色
             - generating_report: 正在生成报告
+            - saving_report: 正在保存报告
             - completed: 已完成
             - failed: 失败
         """
@@ -404,4 +599,70 @@ class AnalysisService:
                 content_html=content_html,
             )
             db.add(report)
+            await db.commit()
+
+    async def _save_agent_runs(
+        self,
+        *,
+        analysis_id: str,
+        orchestration_result: OrchestrationResult,
+        llm_config: dict,
+    ) -> None:
+        analysis_uuid = UUID(analysis_id)
+        provider = llm_config.get("provider")
+        model_name = llm_config.get("model_version")
+
+        def _status_value(value: AgentRunStatus | str) -> str:
+            if isinstance(value, AgentRunStatus):
+                return value.value
+            return str(value)
+
+        def _pick_raw_output(trace: dict[str, str | None]) -> str | None:
+            return trace.get("retry_raw_output") or trace.get("raw_output")
+
+        records: list[AgentRun] = []
+
+        for role_run in orchestration_result.role_runs:
+            trace = role_run.trace or {}
+            records.append(
+                AgentRun(
+                    analysis_id=analysis_uuid,
+                    role=role_run.role.value,
+                    status=_status_value(role_run.status),
+                    prompt_version="v1",
+                    schema_version="v1",
+                    model_provider=provider,
+                    model_name=model_name,
+                    raw_output=_pick_raw_output(trace),
+                    structured_output_json=(
+                        role_run.result.model_dump(mode="json") if role_run.result is not None else None
+                    ),
+                    error_message=role_run.error_message or trace.get("parse_error"),
+                    latency_ms=None,
+                    started_at=None,
+                    completed_at=None,
+                )
+            )
+
+        synthesis_trace = orchestration_result.synthesis_trace or {}
+        records.append(
+            AgentRun(
+                analysis_id=analysis_uuid,
+                role=AgentRole.SYNTHESIS.value,
+                status=AgentRunStatus.COMPLETED.value,
+                prompt_version="v1",
+                schema_version="v1",
+                model_provider=provider,
+                model_name=model_name,
+                raw_output=_pick_raw_output(synthesis_trace),
+                structured_output_json=orchestration_result.synthesis_result.model_dump(mode="json"),
+                error_message=synthesis_trace.get("parse_error"),
+                latency_ms=None,
+                started_at=None,
+                completed_at=None,
+            )
+        )
+
+        async with AsyncSessionLocal() as db:
+            db.add_all(records)
             await db.commit()

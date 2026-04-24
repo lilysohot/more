@@ -89,6 +89,7 @@ export interface AnalysisCreate {
 export interface AnalysisProgress {
   analysis_id: string;
   status: string;
+  progress_stage?: string | null;
   progress: number;
   message: string;
 }

@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, LargeBinary
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, LargeBinary, Integer, JSON
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -57,6 +57,7 @@ class Analysis(Base):
 
     user = relationship("User", back_populates="analyses")
     report = relationship("Report", back_populates="analysis", uselist=False, cascade="all, delete-orphan")
+    agent_runs = relationship("AgentRun", back_populates="analysis", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<Analysis {self.company_name} - {self.status}>"
@@ -75,3 +76,28 @@ class Report(Base):
 
     def __repr__(self):
         return f"<Report {self.id}>"
+
+
+class AgentRun(Base):
+    __tablename__ = "agent_runs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    analysis_id = Column(UUID(as_uuid=True), ForeignKey("analyses.id", ondelete="CASCADE"), nullable=False)
+    role = Column(String(50), nullable=False)
+    status = Column(String(50), nullable=False)
+    prompt_version = Column(String(50), nullable=True)
+    schema_version = Column(String(50), nullable=True)
+    model_provider = Column(String(50), nullable=True)
+    model_name = Column(String(100), nullable=True)
+    raw_output = Column(Text, nullable=True)
+    structured_output_json = Column(JSON, nullable=True)
+    error_message = Column(Text, nullable=True)
+    latency_ms = Column(Integer, nullable=True)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    analysis = relationship("Analysis", back_populates="agent_runs")
+
+    def __repr__(self):
+        return f"<AgentRun {self.analysis_id} {self.role} {self.status}>"

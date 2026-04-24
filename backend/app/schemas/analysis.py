@@ -66,11 +66,13 @@ class AnalysisProgress(BaseModel):
     属性:
         analysis_id: 分析记录ID
         status: 当前状态
+        progress_stage: 进度阶段（兼容多 Agent 细粒度阶段）
         progress: 进度百分比（0-100）
         message: 进度提示消息
     """
     analysis_id: UUID
     status: str
+    progress_stage: Optional[str] = None
     progress: int
     message: str
 

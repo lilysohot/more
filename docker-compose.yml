@@ -46,6 +46,7 @@ services:
       SECRET_KEY: ${SECRET_KEY:-your-secret-key-change-in-production}
       ALLOWED_ORIGINS: http://localhost:3000,http://localhost:5173
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-your-32-byte-encryption-key-here!!!}
+      TUSHARE_TOKEN: ${TUSHARE_TOKEN}
       DEBUG: "true"
     ports:
       - "8123:8000"
@@ -57,7 +58,7 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
-      - ../.trae/skills:/app/skills:ro
+      - ./.trae/skills:/app/.trae/skills:ro
     networks:
       - more_network
     restart: unless-stopped

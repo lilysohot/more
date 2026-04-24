@@ -7,8 +7,8 @@ Usage:
     python backend/test_tushare_skill.py
 
 Note:
-    - Free version may have limited access to some advanced interfaces
-    - Recommended to apply for Tushare Pro Token for complete functionality
+    - Tushare Pro token is required in the current integration
+    - Set TUSHARE_TOKEN before running this script
 """
 
 import asyncio
@@ -28,7 +28,7 @@ async def test_tushare_skill():
     try:
         from skills import get_tushare_skill
         
-        # Initialize Skill (no token needed for free version)
+        # Initialize Skill (reads TUSHARE_TOKEN by default)
         print("\n[1] Initializing Tushare Skill...")
         skill = await get_tushare_skill()
         
@@ -50,7 +50,7 @@ async def test_tushare_skill():
             print(f"   Area: {stock_info.get('area')}")
             print(f"   Market: {stock_info.get('market')}")
         else:
-            print("   WARN: Cannot get stock info (free version limited)")
+            print("   WARN: Cannot get stock info")
         
         # Test daily price
         print(f"\n[3] Getting daily price ({test_stock})...")
@@ -69,7 +69,7 @@ async def test_tushare_skill():
             print(f"   PB: {valuation.get('pb')}")
             print(f"   Total Market Value: {valuation.get('total_mv')} (10k yuan)")
         else:
-            print("   WARN: Cannot get valuation data (free version limited)")
+            print("   WARN: Cannot get valuation data")
         
         # Test financial data
         print(f"\n[5] Getting financial indicators ({test_stock})...")
@@ -79,7 +79,7 @@ async def test_tushare_skill():
             print(f"   Gross Profit Rate: {financial.get('gross_profit_rate')}")
             print(f"   Net Profit Rate: {financial.get('net_profit_ratio')}")
         else:
-            print("   WARN: Cannot get financial data (free version limited)")
+            print("   WARN: Cannot get financial data")
         
         # Comprehensive collection test
         print(f"\n[6] Collecting all data ({test_stock})...")
@@ -97,7 +97,7 @@ async def test_tushare_skill():
     except ImportError as e:
         print(f"\nFAIL: Import error: {e}")
         print("\nPlease install tushare first:")
-        print("  pip install tushare==1.4.26")
+        print("  python -m pip install tushare==1.4.29")
         return False
         
     except Exception as e:

@@ -13,7 +13,11 @@
 
 import logging
 from datetime import datetime
+from html import escape
 from typing import Tuple
+
+from app.services.agents.orchestrator import OrchestrationResult
+from app.services.agents.schemas import AgentRole
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +46,8 @@ class ReportGenerator:
         self,
         company_data: dict,
         financial_ratios: dict,
-        analysis_result: str,
+        analysis_result: str | None = None,
+        orchestration_result: OrchestrationResult | None = None,
         include_charts: bool = True,
     ) -> Tuple[str, str]:
         """
@@ -51,18 +56,31 @@ class ReportGenerator:
         参数:
             company_data: 公司数据字典
             financial_ratios: 财务比率字典
-            analysis_result: LLM 生成的分析结果
+            analysis_result: 兼容旧流程的分析文本
+            orchestration_result: 多 Agent 编排结构化结果
             include_charts: 是否包含图表（仅影响 HTML 格式）
         
         返回:
             Tuple[str, str]: (Markdown 内容, HTML 内容)
         """
+        markdown_block = analysis_result or "暂无分析结果。"
+        html_block = self._legacy_html_block(markdown_block)
+
+        if orchestration_result is not None:
+            markdown_block = self._build_orchestration_markdown(orchestration_result)
+            html_block = self._build_orchestration_html(orchestration_result)
+
         content_md = self._generate_markdown(
-            company_data, financial_ratios, analysis_result
+            company_data,
+            financial_ratios,
+            markdown_block,
         )
-        
+
         content_html = self._generate_html(
-            company_data, financial_ratios, analysis_result, include_charts
+            company_data,
+            financial_ratios,
+            html_block,
+            include_charts,
         )
         
         return content_md, content_html
@@ -133,7 +151,7 @@ class ReportGenerator:
         self,
         company_data: dict,
         financial_ratios: dict,
-        analysis_result: str,
+        analysis_block_html: str,
         include_charts: bool,
     ) -> str:
         """
@@ -142,7 +160,7 @@ class ReportGenerator:
         参数:
             company_data: 公司数据字典
             financial_ratios: 财务比率字典
-            analysis_result: LLM 分析结果
+            analysis_block_html: 已格式化的 HTML 内容块
             include_charts: 是否包含图表
         
         返回:
@@ -324,7 +342,7 @@ class ReportGenerator:
 
         <div class="card">
             <h2>三维合一分析报告</h2>
-            <div class="content">{analysis_result}</div>
+            {analysis_block_html}
         </div>
 
         <div class="card">
@@ -340,6 +358,178 @@ class ReportGenerator:
 </body>
 </html>"""
         return html
+
+    def _legacy_html_block(self, analysis_text: str) -> str:
+        escaped_text = escape(analysis_text).replace("\n", "<br>")
+        return f'<div class="content">{escaped_text}</div>'
+
+    def _build_orchestration_markdown(self, orchestration_result: OrchestrationResult) -> str:
+        synthesis = orchestration_result.synthesis_result
+        failed_roles = [run.role.value for run in orchestration_result.role_runs if run.status.value == "failed"]
+
+        lines = [
+            "## 多 Agent 综合结论",
+            "",
+            f"- 最终评分：{synthesis.final_score:.2f}/10",
+            f"- 投资结论：{synthesis.investment_decision}",
+            f"- 数据充分性：{'不足' if synthesis.insufficient_data else '可用'}",
+        ]
+
+        if failed_roles:
+            lines.append(f"- 角色缺失：{', '.join(failed_roles)}")
+
+        if synthesis.consensus:
+            lines.extend(["", "### 共识要点"])
+            lines.extend([f"- {item}" for item in synthesis.consensus[:6]])
+
+        if synthesis.major_risks:
+            lines.extend(["", "### 主要风险"])
+            lines.extend([f"- {item}" for item in synthesis.major_risks[:6]])
+
+        if synthesis.disagreements:
+            lines.extend(["", "### 关键分歧"])
+            for item in synthesis.disagreements[:6]:
+                lines.append(
+                    f"- {item.topic}：芒格={item.munger or 'N/A'}；产业={item.industry or 'N/A'}；审计={item.audit or 'N/A'}"
+                )
+
+        lines.extend(["", "## 角色观点", ""])
+        for role in (AgentRole.MUNGER, AgentRole.INDUSTRY, AgentRole.AUDIT):
+            lines.extend(self._build_role_markdown_lines(orchestration_result, role))
+
+        lines.extend(
+            [
+                "",
+                "## 汇总结论",
+                synthesis.report_sections.synthesis or "未提供额外汇总说明。",
+            ]
+        )
+
+        return "\n".join(lines)
+
+    def _build_role_markdown_lines(
+        self,
+        orchestration_result: OrchestrationResult,
+        role: AgentRole,
+    ) -> list[str]:
+        role_name = self._role_display_name(role)
+        role_run = next((run for run in orchestration_result.role_runs if run.role == role), None)
+
+        if role_run is None:
+            return [f"### {role_name}", "- 状态：缺失", "- 结论：未返回角色结果", ""]
+
+        if role_run.result is None:
+            return [
+                f"### {role_name}",
+                "- 状态：失败",
+                f"- 结论：{role_run.error_message or '角色执行失败，未返回结构化结果'}",
+                "",
+            ]
+
+        result = role_run.result
+        lines = [
+            f"### {role_name}",
+            "- 状态：完成",
+            f"- 评分：{result.score:.2f}/10",
+            f"- 摘要：{result.summary}",
+        ]
+
+        if result.risks:
+            lines.append(f"- 主要风险：{'；'.join(result.risks[:3])}")
+        if result.questions:
+            lines.append(f"- 待确认问题：{'；'.join(result.questions[:3])}")
+
+        lines.append("")
+        return lines
+
+    def _build_orchestration_html(self, orchestration_result: OrchestrationResult) -> str:
+        synthesis = orchestration_result.synthesis_result
+        failed_roles = [run.role.value for run in orchestration_result.role_runs if run.status.value == "failed"]
+
+        blocks = [
+            '<div class="content">',
+            "<h3>多 Agent 综合结论</h3>",
+            "<ul>",
+            f"<li>最终评分：{synthesis.final_score:.2f}/10</li>",
+            f"<li>投资结论：{escape(synthesis.investment_decision)}</li>",
+            f"<li>数据充分性：{'不足' if synthesis.insufficient_data else '可用'}</li>",
+        ]
+
+        if failed_roles:
+            blocks.append(f"<li>角色缺失：{escape(', '.join(failed_roles))}</li>")
+
+        blocks.append("</ul>")
+
+        if synthesis.consensus:
+            blocks.append("<h3>共识要点</h3>")
+            blocks.append(self._to_html_list(synthesis.consensus[:6]))
+
+        if synthesis.major_risks:
+            blocks.append("<h3>主要风险</h3>")
+            blocks.append(self._to_html_list(synthesis.major_risks[:6]))
+
+        if synthesis.disagreements:
+            blocks.append("<h3>关键分歧</h3>")
+            disagreement_items = [
+                (
+                    f"{item.topic}: 芒格={item.munger or 'N/A'}; 产业={item.industry or 'N/A'}; 审计={item.audit or 'N/A'}"
+                )
+                for item in synthesis.disagreements[:6]
+            ]
+            blocks.append(self._to_html_list(disagreement_items))
+
+        blocks.append("<h3>角色观点</h3>")
+        for role in (AgentRole.MUNGER, AgentRole.INDUSTRY, AgentRole.AUDIT):
+            blocks.append(self._build_role_html(orchestration_result, role))
+
+        blocks.extend(
+            [
+                "<h3>汇总结论</h3>",
+                f"<p>{escape(synthesis.report_sections.synthesis or '未提供额外汇总说明。')}</p>",
+                "</div>",
+            ]
+        )
+        return "".join(blocks)
+
+    def _build_role_html(self, orchestration_result: OrchestrationResult, role: AgentRole) -> str:
+        role_name = self._role_display_name(role)
+        role_run = next((run for run in orchestration_result.role_runs if run.role == role), None)
+
+        if role_run is None:
+            return f"<p><strong>{escape(role_name)}</strong>：缺失（未返回角色结果）</p>"
+
+        if role_run.result is None:
+            message = role_run.error_message or "角色执行失败，未返回结构化结果"
+            return f"<p><strong>{escape(role_name)}</strong>：失败，{escape(message)}</p>"
+
+        result = role_run.result
+        details = [
+            f"<strong>{escape(role_name)}</strong>",
+            f"评分 {result.score:.2f}/10",
+            escape(result.summary),
+        ]
+        if result.risks:
+            details.append(f"风险：{escape('；'.join(result.risks[:3]))}")
+        if result.questions:
+            details.append(f"待确认：{escape('；'.join(result.questions[:3]))}")
+        return f"<p>{' | '.join(details)}</p>"
+
+    @staticmethod
+    def _to_html_list(items: list[str]) -> str:
+        if not items:
+            return "<p>暂无。</p>"
+        list_items = "".join([f"<li>{escape(item)}</li>" for item in items])
+        return f"<ul>{list_items}</ul>"
+
+    @staticmethod
+    def _role_display_name(role: AgentRole) -> str:
+        display = {
+            AgentRole.MUNGER: "芒格视角",
+            AgentRole.INDUSTRY: "产业视角",
+            AgentRole.AUDIT: "审计视角",
+            AgentRole.SYNTHESIS: "汇总视角",
+        }
+        return display.get(role, role.value)
 
     def _generate_chart_section(self, company_data: dict, financial_ratios: dict) -> str:
         """

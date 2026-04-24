@@ -12,7 +12,6 @@
 
 import logging
 import httpx
-import re
 from typing import Optional
 from datetime import datetime
 
@@ -35,6 +34,92 @@ class DataCollector:
         """初始化数据采集器，设置请求头"""
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+
+    @staticmethod
+    def _normalize_stock_code(stock_code: Optional[str]) -> str:
+        if not stock_code:
+            return ""
+        return str(stock_code).split(".")[0].strip().upper()
+
+    @classmethod
+    def _infer_exchange(cls, stock_code: Optional[str]) -> Optional[str]:
+        normalized_code = cls._normalize_stock_code(stock_code)
+        if not normalized_code:
+            return None
+        if normalized_code.startswith(("6", "9")):
+            return "SH"
+        if normalized_code.startswith(("0", "2", "3")):
+            return "SZ"
+        return None
+
+    @staticmethod
+    def _contains_chinese(value: str) -> bool:
+        return any("\u4e00" <= char <= "\u9fff" for char in value)
+
+    @staticmethod
+    def _to_pinyin_initials(value: str) -> Optional[str]:
+        if not value:
+            return None
+
+        try:
+            from pypinyin import Style, lazy_pinyin
+
+            initials = "".join(lazy_pinyin(value, style=Style.FIRST_LETTER)).upper()
+            return initials or None
+        except Exception as e:
+            logger.warning(f"Failed to convert company name to pinyin: {e}")
+            return None
+
+    async def _fetch_search_results(self, query: str) -> list[dict]:
+        async with httpx.AsyncClient(timeout=10) as client:
+            url = "https://searchapi.eastmoney.com/api/suggest/get"
+            params = {
+                "input": query,
+                "type": "14",
+                "count": 5,
+            }
+            response = await client.get(url, params=params, headers=self.headers)
+            data = response.json()
+            result_data = data.get("QuotationCodeTable", {}).get("Data") or []
+            if not result_data:
+                return []
+
+            astock_results = [item for item in result_data if item.get("Classify") == "AStock"]
+            return astock_results or result_data
+
+    async def resolve_stock(self, company_name: Optional[str] = None, stock_code: Optional[str] = None) -> dict:
+        """Resolve official company name and stock code via EastMoney."""
+        normalized_code = self._normalize_stock_code(stock_code)
+        normalized_name = (company_name or "").strip()
+
+        if normalized_code:
+            stock_info = await self._get_stock_info(normalized_code)
+            if stock_info.get("stock_code") and stock_info.get("company_name"):
+                return {
+                    "company_name": stock_info.get("company_name"),
+                    "stock_code": stock_info.get("stock_code"),
+                    "exchange": stock_info.get("exchange"),
+                    "industry": stock_info.get("industry"),
+                    "data_source": "eastmoney",
+                }
+
+        if not normalized_name:
+            return {}
+
+        search_match = await self._search_stock(normalized_name)
+        if not search_match:
+            return {}
+
+        matched_code = self._normalize_stock_code(search_match.get("stock_code"))
+        stock_info = await self._get_stock_info(matched_code) if matched_code else {}
+
+        return {
+            "company_name": stock_info.get("company_name") or search_match.get("company_name"),
+            "stock_code": stock_info.get("stock_code") or matched_code,
+            "exchange": stock_info.get("exchange") or search_match.get("exchange") or self._infer_exchange(matched_code),
+            "industry": stock_info.get("industry") or search_match.get("industry"),
+            "data_source": "eastmoney",
         }
 
     async def collect(self, company_name: str, stock_code: str = None) -> dict:
@@ -70,13 +155,17 @@ class DataCollector:
             - data_date: 数据日期
         """
         logger.info(f"Collecting data for {company_name} ({stock_code})")
+
+        resolved_identity = await self.resolve_stock(company_name=company_name, stock_code=stock_code)
+        normalized_company_name = resolved_identity.get("company_name") or company_name
+        normalized_stock_code = resolved_identity.get("stock_code") or self._normalize_stock_code(stock_code) or None
         
         # 初始化公司数据结构
         company_data = {
-            "company_name": company_name,
-            "stock_code": stock_code,
-            "exchange": None,
-            "industry": None,
+            "company_name": normalized_company_name,
+            "stock_code": normalized_stock_code,
+            "exchange": resolved_identity.get("exchange"),
+            "industry": resolved_identity.get("industry"),
             # 盈利能力
             "revenue": None,            # 营业收入
             "net_profit": None,        # 净利润
@@ -106,21 +195,72 @@ class DataCollector:
             "pb_ratio": None,         # 市净率
             "ps_ratio": None,         # 市销率
             # 元数据
-            "data_source": "网络搜索",
+            "data_source": resolved_identity.get("data_source") or "eastmoney",
             "data_date": datetime.now().strftime("%Y-%m-%d"),
         }
         
         # 如果没有股票代码，先搜索
-        if not stock_code:
-            stock_code = await self._search_stock_code(company_name)
-            company_data["stock_code"] = stock_code
+        if not normalized_stock_code:
+            normalized_stock_code = await self._search_stock_code(company_name)
+            company_data["stock_code"] = normalized_stock_code
         
         # 获取股票详细信息
-        if stock_code:
-            stock_info = await self._get_stock_info(stock_code)
+        if normalized_stock_code:
+            stock_info = await self._get_stock_info(normalized_stock_code)
             company_data.update(stock_info)
+
+        company_data["company_name"] = company_data.get("company_name") or normalized_company_name
+        company_data["stock_code"] = company_data.get("stock_code") or normalized_stock_code
+        company_data["exchange"] = company_data.get("exchange") or resolved_identity.get("exchange")
+        company_data["industry"] = company_data.get("industry") or resolved_identity.get("industry")
         
         return company_data
+
+    async def _search_stock(self, company_name: str) -> Optional[dict]:
+        """Search EastMoney and return the best-matched stock identity."""
+        try:
+            search_queries = [company_name]
+            if self._contains_chinese(company_name):
+                pinyin_initials = self._to_pinyin_initials(company_name)
+                if pinyin_initials and pinyin_initials not in search_queries:
+                    search_queries.append(pinyin_initials)
+
+            for query in search_queries:
+                result_data = await self._fetch_search_results(query)
+                if not result_data:
+                    continue
+
+                fuzzy_matches = []
+                for item in result_data:
+                    code = self._normalize_stock_code(item.get("Code"))
+                    name = str(item.get("Name", "")).strip()
+                    if not code or not name:
+                        continue
+
+                    candidate = {
+                        "company_name": name,
+                        "stock_code": code,
+                        "exchange": "SH" if str(item.get("MktNum", "")) == "1" else "SZ",
+                        "industry": None,
+                    }
+
+                    if name == company_name or code == company_name:
+                        return candidate
+
+                    if company_name in name or name in company_name:
+                        fuzzy_matches.append(candidate)
+
+                if len(fuzzy_matches) == 1:
+                    return fuzzy_matches[0]
+
+                if len(fuzzy_matches) > 1:
+                    logger.info(f"Ambiguous stock search for {company_name}: {fuzzy_matches[:3]}")
+
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to search stock identity: {e}")
+
+        return None
 
     async def _search_stock_code(self, company_name: str) -> Optional[str]:
         """
@@ -134,34 +274,8 @@ class DataCollector:
         返回:
             str: 股票代码，如果未找到返回 None
         """
-        try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                url = f"https://searchapi.eastmoney.com/api/suggest/get"
-                params = {
-                    "input": company_name,
-                    "type": "14",
-                    "count": 5,
-                }
-                response = await client.get(url, params=params, headers=self.headers)
-                data = response.json()
-                
-                # 遍历搜索结果，寻找匹配的公司
-                # 支持两种结构: {"Data": [...]} 或 {"QuotationCodeTable": {"Data": [...]}}
-                result_data = data.get("QuotationCodeTable", {} ).get("Data")
-                # if not result_data and "QuotationCodeTable" in data:
-                #     result_data = data["QuotationCodeTable"].get("Data")
-                
-                if result_data:
-                    for item in result_data:
-                        code = item.get("Code", "")
-                        name = item.get("Name", "")
-                        if company_name in name or name in company_name:
-                            return code
-
-        except Exception as e:
-            logger.warning(f"Failed to search stock code: {e}")
-        
-        return None
+        result = await self._search_stock(company_name)
+        return result.get("stock_code") if result else None
 
     async def _get_stock_info(self, stock_code: str) -> dict:
         """
@@ -176,13 +290,14 @@ class DataCollector:
             dict: 股票信息字典，包含市值、PE、PB等
         """
         info = {}
+        normalized_code = self._normalize_stock_code(stock_code)
         
         try:
             # 根据股票代码判断交易所
-            if stock_code.startswith(("6", "9")):
-                secid = f"1.{stock_code}"  # 上海交易所
+            if normalized_code.startswith(("6", "9")):
+                secid = f"1.{normalized_code}"  # 上海交易所
             else:
-                secid = f"0.{stock_code}"  # 深圳交易所
+                secid = f"0.{normalized_code}"  # 深圳交易所
             
             async with httpx.AsyncClient(timeout=10) as client:
                 # 获取基本行情数据
@@ -196,7 +311,9 @@ class DataCollector:
                 
                 if data.get("data"):
                     d = data["data"]
-                    info["exchange"] = "SH" if stock_code.startswith(("6", "9")) else "SZ"
+                    info["company_name"] = d.get("f58")
+                    info["stock_code"] = self._normalize_stock_code(d.get("f57")) or normalized_code
+                    info["exchange"] = "SH" if normalized_code.startswith(("6", "9")) else "SZ"
                     # 注意：东方财富行情API (push2.eastmoney.com) 中没有行业字段
                     # f84/f85 是数值字段（总资产等），不是行业信息
                     # 行业信息需要通过其他API获取，暂时设为 None
@@ -212,7 +329,7 @@ class DataCollector:
             logger.warning(f"Failed to get stock info from eastmoney: {e}")
         
         # 获取财务摘要数据（总资产、总负债、资产负债率等）
-        await self._get_financial_summary(stock_code, info)
+        await self._get_financial_summary(normalized_code, info)
         
         return info
     

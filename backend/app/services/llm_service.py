@@ -1,25 +1,26 @@
 """
 LLM 服务模块
 
-负责与大语言模型 API 交互，执行三维合一投资分析。
+负责与大语言模型 API 交互，提供通用的 prompt -> text 调用能力。
 
 支持的 LLM 提供商：
 - DashScope（阿里云通义千问）
 - OpenAI（GPT 系列）
 - Claude（Anthropic）
 
-该模块构建专业的投资分析提示词，调用 LLM API 获取分析结果。
+说明：
+- `generate(prompt)` 是多 Agent 流程的标准入口。
+- `analyze(company_data, financial_ratios)` 仅保留为旧流程兼容入口。
 """
 
 import logging
 import httpx
-import json
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 
-INVESTMENT_ANALYST_PROMPT = """你是一位顶级投资分析师，擅长使用"三维合一投资决策委员会框架"进行公司分析。
+_LEGACY_INVESTMENT_ANALYST_PROMPT = """你是一位顶级投资分析师，擅长使用"三维合一投资决策委员会框架"进行公司分析。
 
 请基于以下公司数据，进行深度分析：
 
@@ -88,7 +89,7 @@ class LLMService:
     """
     LLM 服务类
     
-    负责与不同的大语言模型 API 进行交互，执行投资分析。
+    负责与不同的大语言模型 API 进行交互。
     
     属性:
         provider: LLM 提供商（dashscope/openai/claude）
@@ -96,7 +97,11 @@ class LLMService:
         base_url: API 端点地址（可选）
         model_version: 模型版本
     
-    使用示例:
+    使用示例（推荐）:
+        service = LLMService(config)
+        result = await service.generate("请输出 JSON")
+
+    旧流程兼容示例:
         config = {
             "provider": "dashscope",
             "api_key": "your-api-key",
@@ -113,10 +118,31 @@ class LLMService:
         参数:
             config: 配置字典，包含 provider, api_key, base_url, model_version
         """
-        self.provider = config.get("provider", "dashscope")
+        self.provider = str(config.get("provider", "dashscope") or "dashscope").lower()
         self.api_key = config.get("api_key")
         self.base_url = config.get("base_url")
         self.model_version = config.get("model_version")
+
+    async def generate(self, prompt: str) -> str:
+        """
+        通用文本生成入口。
+
+        参数:
+            prompt: 任意业务层构建好的提示词
+
+        返回:
+            str: LLM 返回文本
+        """
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ValueError("prompt must be a non-empty string")
+
+        method_by_provider = {
+            "dashscope": self._call_dashscope,
+            "openai": self._call_openai,
+            "claude": self._call_claude,
+        }
+        call_method = method_by_provider.get(self.provider, self._call_dashscope)
+        return await call_method(prompt)
 
     async def analyze(self, company_data: dict, financial_ratios: dict) -> str:
         """
@@ -136,15 +162,7 @@ class LLMService:
             - 默认使用 DashScope（通义千问）
         """
         prompt = self._build_prompt(company_data, financial_ratios)
-        
-        if self.provider == "dashscope":
-            return await self._call_dashscope(prompt)
-        elif self.provider == "openai":
-            return await self._call_openai(prompt)
-        elif self.provider == "claude":
-            return await self._call_claude(prompt)
-        else:
-            return await self._call_dashscope(prompt)
+        return await self.generate(prompt)
 
     def _build_prompt(self, company_data: dict, financial_ratios: dict) -> str:
         """
@@ -159,7 +177,7 @@ class LLMService:
         返回:
             str: 完整的提示词字符串
         """
-        return INVESTMENT_ANALYST_PROMPT.format(
+        return _LEGACY_INVESTMENT_ANALYST_PROMPT.format(
             company_name=company_data.get("company_name", "未知"),
             stock_code=company_data.get("stock_code", "未知"),
             industry=company_data.get("industry", "未知"),

@@ -1,3 +1,3 @@
-from app.models.user import User, APIConfig, Analysis, Report
+from app.models.user import User, APIConfig, Analysis, Report, AgentRun
 
-__all__ = ["User", "APIConfig", "Analysis", "Report"]
+__all__ = ["User", "APIConfig", "Analysis", "Report", "AgentRun"]
