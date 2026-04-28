@@ -83,7 +83,7 @@ export const analysisApi = {
    * 获取分析报告内容
    * 
    * @param analysisId - 分析记录ID
-   * @returns 报告内容，包含 Markdown 和 HTML 格式
+   * @returns 报告内容，包含原文报告和结构化投研字段
    */
   getReport: async (analysisId: string): Promise<Report> => {
     return request({

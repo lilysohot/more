@@ -16,6 +16,7 @@ const LoginPage: React.FC = () => {
       message.success('登录成功');
       navigate('/');
     } catch {
+      // The shared request interceptor surfaces API errors to the user.
     }
   };
 
@@ -90,6 +91,7 @@ const RegisterPage: React.FC = () => {
       message.success('注册成功');
       navigate('/');
     } catch {
+      // The shared request interceptor surfaces API errors to the user.
     }
   };
 

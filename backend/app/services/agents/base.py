@@ -142,8 +142,11 @@ class BaseAgent(ABC, Generic[TResult]):
     def build_repair_prompt(self, raw_output: str, parse_error: Exception) -> str:
         """Build default repair prompt for one-shot parse retry."""
         return (
-            "Your previous output failed JSON parsing or schema validation. "
-            "Return only valid JSON and no extra text.\n"
+            "Your previous output failed JSON parsing, schema validation, or language checks. "
+            "Return only valid JSON and no extra text. "
+            "All report-facing narrative fields must be Chinese. "
+            "Required role enums, source labels, company names, stock codes, and metric abbreviations may keep their original annotations. "
+            "所有面向报告展示的说明字段必须使用中文。\n"
             f"Role: {self.role.value}\n"
             f"Error: {parse_error}\n"
             "--- RAW OUTPUT START ---\n"

@@ -23,6 +23,7 @@ from app.services.agents import AgentContext, AgentOrchestrator, AgentRole, Agen
 from app.services.agents.orchestrator import OrchestrationResult
 from app.services.data_collector import DataCollector
 from app.services.report_generator import ReportGenerator
+from app.services.structured_report import build_structured_report_payload
 from app.utils.encryption import decrypt_api_key
 from app.core.config import settings
 from skills import get_tushare_skill
@@ -337,7 +338,12 @@ class AnalysisService:
             task_info["current_step"] = ProgressStage.SAVING_REPORT.value
             _update_active_task(analysis_id, task_info)
             await self._update_status(analysis_id, ProgressStage.SAVING_REPORT.value)
-            await self._save_report(analysis_id, content_md, content_html)
+            structured_data = build_structured_report_payload(
+                company_data=company_data,
+                financial_ratios=financial_ratios,
+                orchestration_result=orchestration_result,
+            )
+            await self._save_report(analysis_id, content_md, content_html, structured_data)
             
             # 完成
             task_info["current_step"] = "completed"
@@ -429,23 +435,33 @@ class AnalysisService:
 
         source = company_data.get("data_source", "unknown")
         if not missing_fields:
-            return f"Using live data from {source}."
+            return f"使用实时数据来源：{source}。"
 
-        return f"Using live data from {source}, but missing fields: {', '.join(missing_fields)}."
+        return f"使用实时数据来源：{source}，但缺失字段：{', '.join(missing_fields)}。"
+
+    @staticmethod
+    def _role_display_name(role: AgentRole) -> str:
+        display = {
+            AgentRole.MUNGER: "芒格视角",
+            AgentRole.INDUSTRY: "产业视角",
+            AgentRole.AUDIT: "审计视角",
+            AgentRole.SYNTHESIS: "汇总视角",
+        }
+        return display.get(role, role.value)
 
     def _render_orchestration_markdown(self, orchestration_result: OrchestrationResult) -> str:
         synthesis = orchestration_result.synthesis_result
         report_sections = synthesis.report_sections
-        failed_roles = [role.value for role in orchestration_result.failed_roles]
+        failed_roles = [self._role_display_name(role) for role in orchestration_result.failed_roles]
 
         role_summary: dict[AgentRole, str] = {}
         for run in orchestration_result.role_runs:
             if run.result is not None:
                 role_summary[run.role] = run.result.summary
             elif run.error_message:
-                role_summary[run.role] = f"{run.role.value} role failed: {run.error_message}"
+                role_summary[run.role] = f"{self._role_display_name(run.role)}执行失败：{run.error_message}"
             else:
-                role_summary[run.role] = f"{run.role.value} role did not return output."
+                role_summary[run.role] = f"{self._role_display_name(run.role)}未返回输出。"
 
         lines = [
             "## 多 Agent 综合结论",
@@ -470,7 +486,7 @@ class AnalysisService:
             lines.extend(["", "### 关键分歧"])
             for item in synthesis.disagreements[:5]:
                 lines.append(
-                    f"- {item.topic}：芒格={item.munger or 'N/A'}；产业={item.industry or 'N/A'}；审计={item.audit or 'N/A'}"
+                    f"- {item.topic}：芒格={item.munger or '未提供'}；产业={item.industry or '未提供'}；审计={item.audit or '未提供'}"
                 )
 
         lines.extend(
@@ -583,7 +599,13 @@ class AnalysisService:
             "model_version": settings.DEFAULT_LLM_MODEL,
         }
 
-    async def _save_report(self, analysis_id: str, content_md: str, content_html: str):
+    async def _save_report(
+        self,
+        analysis_id: str,
+        content_md: str,
+        content_html: str,
+        structured_data: dict | None = None,
+    ):
         """
         保存分析报告到数据库
         
@@ -597,6 +619,7 @@ class AnalysisService:
                 analysis_id=UUID(analysis_id),
                 content_md=content_md,
                 content_html=content_html,
+                structured_data_json=structured_data,
             )
             db.add(report)
             await db.commit()

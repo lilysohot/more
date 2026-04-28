@@ -58,7 +58,7 @@ ReportGenerator 结构化编排
 
 ## 三、开发任务列表
 
-### 任务 1：定义多 Agent 核心 Schema
+### 任务 1：定义多 Agent 核心 Schema ✅（已完成）
 
 **目标**
 
@@ -99,7 +99,7 @@ ReportGenerator 结构化编排
 
 ---
 
-### 任务 2：实现 `BaseAgent` 和统一解析流程
+### 任务 2：实现 `BaseAgent` 和统一解析流程 ✅（已完成）
 
 **目标**
 
@@ -139,7 +139,7 @@ ReportGenerator 结构化编排
 
 ---
 
-### 任务 3：拆分 3 个角色 Agent
+### 任务 3：拆分 3 个角色 Agent ✅（已完成）
 
 **目标**
 
@@ -179,7 +179,7 @@ ReportGenerator 结构化编排
 
 ---
 
-### 任务 4：实现 `synthesis_agent`
+### 任务 4：实现 `synthesis_agent` ✅（已完成）
 
 **目标**
 
@@ -219,7 +219,7 @@ ReportGenerator 结构化编排
 
 ---
 
-### 任务 5：实现 `AgentOrchestrator`
+### 任务 5：实现 `AgentOrchestrator` ✅（已完成）
 
 **目标**
 
@@ -259,7 +259,7 @@ ReportGenerator 结构化编排
 
 ---
 
-### 任务 6：改造 `LLMService` 以支持多 Agent 调用
+### 任务 6：改造 `LLMService` 以支持多 Agent 调用 ✅（已完成）
 
 **目标**
 
@@ -296,7 +296,7 @@ ReportGenerator 结构化编排
 
 ---
 
-### 任务 7：在 `AnalysisService` 中接入多 Agent 主流程
+### 任务 7：在 `AnalysisService` 中接入多 Agent 主流程 ✅（已完成）
 
 **目标**
 
@@ -336,7 +336,7 @@ ReportGenerator 结构化编排
 
 ---
 
-### 任务 8：补充 `agent_runs` 持久化记录
+### 任务 8：补充 `agent_runs` 持久化记录 ✅（已完成）
 
 **目标**
 
@@ -386,7 +386,7 @@ ReportGenerator 结构化编排
 
 ---
 
-### 任务 9：改造 `ReportGenerator` 以消费结构化结果
+### 任务 9：改造 `ReportGenerator` 以消费结构化结果 ✅（已完成）
 
 **目标**
 
@@ -425,7 +425,7 @@ ReportGenerator 结构化编排
 
 ---
 
-### 任务 10：补充最小接口和进度兼容改造
+### 任务 10：补充最小接口和进度兼容改造 ✅（已完成）
 
 **目标**
 

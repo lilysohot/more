@@ -48,7 +48,7 @@ def _is_chinese_preferred(value: str) -> bool:
         return True
 
     chinese_count = len(_CHINESE_CHAR_RE.findall(text))
-    return chinese_count >= latin_count
+    return chinese_count * 2 >= latin_count
 
 
 def _ensure_chinese_text(value: str, field_name: str) -> None:
@@ -222,34 +222,33 @@ class SynthesisAgent(BaseAgent[SynthesisResult]):
 
         return dedent(
             f"""
-            You are the synthesis agent in a multi-agent stock analysis workflow.
-            Your task is to merge role outputs into one structured synthesis.
+            你是多 Agent 股票分析工作流中的综合汇总角色，任务是把角色输出合并为一个结构化综合结论。
 
-            Input policy:
-            - Consume only the structured role snapshots and aggregation hints below.
-            - Do not request full narrative text reconstruction.
-            - Preserve role disagreements instead of forcing false consensus.
+            输入策略：
+            - 只使用下方结构化角色快照和聚合提示。
+            - 不要请求重建完整长文本叙事。
+            - 必须保留角色之间的真实分歧，不要强行制造共识。
 
-            Output contract:
-            1) Return exactly one JSON object.
-            2) Do not return markdown, code fences, or explanations.
-            3) JSON fields and constraints:
-                - company_profile: non-empty string
+            输出契约：
+            1) 只返回一个 JSON 对象。
+            2) 不要返回 markdown、代码块或 JSON 之外的解释。
+            3) JSON 字段与约束：
+                - company_profile: 非空字符串
                 - consensus: string[]
-                - disagreements: object[] with fields: topic (required), munger?, industry?, audit?
-                - final_score: number in [0, 10]
-                - investment_decision: non-empty string
+                - disagreements: object[]，字段包括 topic（必填）、munger?、industry?、audit?
+                - final_score: [0, 10] 范围内的数字
+                - investment_decision: 非空字符串
                 - insufficient_data: boolean
                 - core_reasons: string[]
                 - major_risks: string[]
-                - report_sections: object with string fields intro, munger_view, industry_view, audit_view, synthesis
-             4) 所有文本字段必须使用中文，不得出现英文文本或解释。
+                - report_sections: object，包含 intro、munger_view、industry_view、audit_view、synthesis 字符串字段
+             4) 所有面向报告展示的文本字段必须使用中文，不得出现英文说明；公司名、股票代码、ROE/PE/PB 等特殊标注可以保留原始写法。
 
-            Decision rules:
-            - If aggregation_hints.forced_insufficient_data is true, insufficient_data must be true.
-            - If aggregation_hints.missing_roles is non-empty, explicitly mention missing views in report_sections.synthesis.
-            - Keep final_score close to aggregation_hints.baseline_final_score unless evidence strongly justifies adjustment.
-            - 输出必须为中文
+            决策规则：
+            - 如果 aggregation_hints.forced_insufficient_data 为 true，insufficient_data 必须为 true。
+            - 如果 aggregation_hints.missing_roles 非空，必须在 report_sections.synthesis 中明确说明缺失视角。
+            - 除非证据强烈支持调整，否则 final_score 应接近 aggregation_hints.baseline_final_score。
+            - 输出必须为中文。
 
             Analysis context JSON:
             {context_payload}
@@ -283,8 +282,8 @@ class SynthesisAgent(BaseAgent[SynthesisResult]):
 
     def build_repair_prompt(self, raw_output: str, parse_error: Exception) -> str:
         return (
-            "Your previous output failed schema/format checks or was not fully in Chinese. "
-            "Return only valid JSON. Translate all narrative fields into Chinese.\n"
+            "上一次输出未通过 schema/format 或中文校验。"
+            "只返回有效 JSON，不要添加额外说明。所有面向报告展示的叙述字段必须翻译为中文。\n"
             f"Role: {self.role.value}\n"
             f"Error: {parse_error}\n"
             "--- RAW OUTPUT START ---\n"

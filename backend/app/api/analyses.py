@@ -18,7 +18,7 @@ from uuid import UUID
 
 from app.database import get_db
 from app.api.deps import get_current_user
-from app.models.user import User, Analysis, Report, APIConfig
+from app.models.user import User, Analysis, Report, AgentRun
 from app.schemas.analysis import (
     AnalysisCreate,
     AnalysisResponse,
@@ -28,7 +28,7 @@ from app.schemas.analysis import (
     AnalysisListResponse,
 )
 from app.services.analysis import AnalysisService, get_active_tasks
-from app.utils.encryption import decrypt_api_key
+from app.services.structured_report import build_report_response
 
 router = APIRouter()
 
@@ -287,7 +287,18 @@ async def get_analysis_report(
             detail="报告不存在",
         )
 
-    return report
+    agent_runs_result = await db.execute(
+        select(AgentRun)
+        .where(AgentRun.analysis_id == analysis_id)
+        .order_by(AgentRun.created_at.asc())
+    )
+    agent_runs = list(agent_runs_result.scalars().all())
+
+    return build_report_response(
+        analysis=analysis,
+        report=report,
+        agent_runs=agent_runs,
+    )
 
 
 @router.delete("/{analysis_id}", status_code=status.HTTP_204_NO_CONTENT)

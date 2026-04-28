@@ -16,7 +16,7 @@ interface APIConfigState {
   testConfig: (data: APIConfigTest) => Promise<{ success: boolean; message: string }>;
 }
 
-export const useAPIConfigStore = create<APIConfigState>((set, get) => ({
+export const useAPIConfigStore = create<APIConfigState>((set) => ({
   configs: [],
   defaultConfig: null,
   isLoading: false,

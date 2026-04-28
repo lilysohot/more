@@ -17,6 +17,7 @@
     "noFallthroughCasesInSwitch": true,
     "baseUrl": ".",
     "paths": {
+      "@ant-design/icons": ["src/types/ant-design-icons.ts"],
       "@/*": ["src/*"]
     }
   },

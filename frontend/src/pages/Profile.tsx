@@ -28,6 +28,7 @@ const ProfilePage: React.FC = () => {
       setStats(statsData);
       setHistory(historyData);
     } catch {
+      // The shared request interceptor surfaces API errors to the user.
     } finally {
       setLoading(false);
     }
@@ -40,6 +41,7 @@ const ProfilePage: React.FC = () => {
       message.success('更新成功');
       setEditModalVisible(false);
     } catch {
+      // The shared request interceptor surfaces API errors to the user.
     }
   };
 

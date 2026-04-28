@@ -20,6 +20,11 @@ import { Analysis, AnalysisCreate, AnalysisProgress, Report, APIConfig } from '@
 import { analysisApi } from '@/api/analysis';
 import { apiConfigApi } from '@/api/apiConfig';
 
+const getErrorMessage = (error: unknown, fallback: string) => {
+  const detail = (error as { response?: { data?: { detail?: unknown } } }).response?.data?.detail;
+  return typeof detail === 'string' ? detail : fallback;
+};
+
 interface AnalysisState {
   /** 当前分析任务 */
   currentAnalysis: Analysis | null;
@@ -81,11 +86,11 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
       const analysis = await analysisApi.createAnalysis(data);
       set({ currentAnalysis: analysis, isLoading: false });
       return analysis;
-    } catch (error: any) {
-      set({ 
-        error: error.response?.data?.detail || '创建分析失败', 
-        isLoading: false, 
-        isAnalyzing: false 
+    } catch (error: unknown) {
+      set({
+        error: getErrorMessage(error, '创建分析失败'),
+        isLoading: false,
+        isAnalyzing: false
       });
       throw error;
     }
@@ -108,8 +113,8 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
       }
       
       return progress;
-    } catch (error: any) {
-      set({ error: error.response?.data?.detail || '获取进度失败' });
+    } catch (error: unknown) {
+      set({ error: getErrorMessage(error, '获取进度失败') });
       throw error;
     }
   },
@@ -126,10 +131,10 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
       const report = await analysisApi.getReport(analysisId);
       set({ report, isLoading: false });
       return report;
-    } catch (error: any) {
-      set({ 
-        error: error.response?.data?.detail || '获取报告失败', 
-        isLoading: false 
+    } catch (error: unknown) {
+      set({
+        error: getErrorMessage(error, '获取报告失败'),
+        isLoading: false
       });
       throw error;
     }
@@ -146,10 +151,10 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
     try {
       const response = await analysisApi.listAnalyses(skip, limit);
       set({ analyses: response.items, total: response.total, isLoading: false });
-    } catch (error: any) {
-      set({ 
-        error: error.response?.data?.detail || '获取分析列表失败', 
-        isLoading: false 
+    } catch (error: unknown) {
+      set({
+        error: getErrorMessage(error, '获取分析列表失败'),
+        isLoading: false
       });
     }
   },
@@ -179,8 +184,8 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
         analyses: analyses.filter(a => a.id !== analysisId),
         total: get().total - 1
       });
-    } catch (error: any) {
-      set({ error: error.response?.data?.detail || '删除分析失败' });
+    } catch (error: unknown) {
+      set({ error: getErrorMessage(error, '删除分析失败') });
       throw error;
     }
   },

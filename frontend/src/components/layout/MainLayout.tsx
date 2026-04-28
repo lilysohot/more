@@ -1,14 +1,16 @@
 import React, { useEffect } from 'react';
-import { Layout, Menu, Dropdown, Avatar, Space } from 'antd';
+import { Layout, Menu, Dropdown, Avatar, Space, Grid } from 'antd';
 import { UserOutlined, LogoutOutlined, SettingOutlined, HomeOutlined } from '@ant-design/icons';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '@/store';
 
 const { Header, Content, Sider } = Layout;
+const { useBreakpoint } = Grid;
 
 const MainLayout: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const screens = useBreakpoint();
   const { user, logout, isAuthenticated } = useAuthStore();
 
   useEffect(() => {
@@ -65,7 +67,9 @@ const MainLayout: React.FC = () => {
     <Layout className="min-h-screen">
       <Header className="bg-white shadow-sm flex items-center justify-between px-6">
         <div className="flex items-center">
-          <h1 className="text-xl font-bold text-gray-800 m-0">公司分析研报助手</h1>
+          <h1 className="text-xl font-bold text-gray-800 m-0">
+            <button type="button" className="bg-transparent border-0 p-0 cursor-pointer font-inherit text-inherit" onClick={() => navigate('/')}>公司分析研报助手</button>
+          </h1>
         </div>
         
         <div className="flex items-center">
@@ -79,14 +83,16 @@ const MainLayout: React.FC = () => {
       </Header>
       
       <Layout>
-        <Sider width={200} className="bg-white">
-          <Menu
-            mode="inline"
-            selectedKeys={[location.pathname]}
-            items={siderMenuItems}
-            className="h-full border-r"
-          />
-        </Sider>
+        {screens.md ? (
+          <Sider width={200} className="bg-white">
+            <Menu
+              mode="inline"
+              selectedKeys={[location.pathname]}
+              items={siderMenuItems}
+              className="h-full border-r"
+            />
+          </Sider>
+        ) : null}
         
         <Content className="p-6 bg-gray-50">
           <Outlet />

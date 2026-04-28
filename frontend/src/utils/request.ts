@@ -3,6 +3,10 @@ import { message } from 'antd';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
 
+type ErrorResponseData = {
+  detail?: string;
+};
+
 const request = axios.create({
   baseURL: BASE_URL,
   timeout: 30000,
@@ -32,7 +36,7 @@ request.interceptors.response.use(
     if (error.response) {
       const status = error.response.status;
       // 获取后端返回的错误信息
-      const errorMessage = (error.response.data as any)?.detail || '请求失败';
+      const errorMessage = (error.response.data as ErrorResponseData | undefined)?.detail || '请求失败';
       
       if (status === 401) {
         localStorage.removeItem('token');

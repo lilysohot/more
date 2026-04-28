@@ -8,12 +8,13 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.database import Base
-from app.models import User, APIConfig, Analysis, Report
+from app.models import User, APIConfig, Analysis, Report, AgentRun
 from app.core.config import settings
 
 config = context.config
 
-if config.get_main_option("sqlalchemy.url") is None:
+configured_url = config.get_main_option("sqlalchemy.url")
+if not configured_url or configured_url == "driver://user:pass@localhost/dbname":
     database_url = settings.DATABASE_URL
     if database_url.startswith("postgresql://"):
         database_url = database_url.replace("postgresql://", "postgresql+psycopg2://", 1)

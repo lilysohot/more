@@ -1,5 +1,5 @@
 import { useAPIConfigStore } from '@/store';
-import { APIConfig, APIConfigCreate, APIConfigUpdate } from '@/types';
+import { APIConfig, APIConfigCreate, APIConfigTest, APIConfigUpdate } from '@/types';
 import {
   CheckOutlined,
   DeleteOutlined,
@@ -31,6 +31,15 @@ const PROVIDERS = [
   { value: 'claude', label: 'Claude' },
   { value: 'custom', label: '自定义' },
 ];
+
+type APIConfigFormValues = {
+  model_name: string;
+  provider: string;
+  api_key: string;
+  base_url?: string;
+  model_version?: string;
+  is_default?: boolean;
+};
 
 const ApiConfigPage: React.FC = () => {
   const {
@@ -69,7 +78,7 @@ const ApiConfigPage: React.FC = () => {
     setModalVisible(true);
   };
 
-  const handleSubmit = async (values: any) => {
+  const handleSubmit = async (values: APIConfigFormValues) => {
     try {
       if (editingConfig) {
         const updateData: APIConfigUpdate = {};
@@ -96,6 +105,7 @@ const ApiConfigPage: React.FC = () => {
       }
       setModalVisible(false);
     } catch {
+      // The shared request interceptor surfaces API errors to the user.
     }
   };
 
@@ -104,6 +114,7 @@ const ApiConfigPage: React.FC = () => {
       await deleteConfig(id);
       message.success('删除成功');
     } catch {
+      // The shared request interceptor surfaces API errors to the user.
     }
   };
 
@@ -112,6 +123,7 @@ const ApiConfigPage: React.FC = () => {
       await setDefault(id);
       message.success('已设为默认');
     } catch {
+      // The shared request interceptor surfaces API errors to the user.
     }
   };
 
@@ -126,7 +138,7 @@ const ApiConfigPage: React.FC = () => {
     setTestResult(null);
   };
 
-  const handleTestSubmit = async (values: any) => {
+  const handleTestSubmit = async (values: APIConfigTest) => {
     setTesting(true);
     setTestResult(null);
     try {

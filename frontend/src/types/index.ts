@@ -100,6 +100,102 @@ export interface Report {
   content_md: string | null;
   content_html: string | null;
   created_at: string;
+  company?: StructuredReportCompany | null;
+  financials?: StructuredReportFinancials | null;
+  synthesis?: StructuredReportSynthesis | null;
+  agents?: StructuredReportAgent[];
+  data_quality?: StructuredReportDataQuality | null;
+  original?: StructuredReportOriginal | null;
+}
+
+export interface StructuredReportCompany {
+  company_name: string;
+  stock_code?: string | null;
+  ts_code?: string | null;
+  exchange?: string | null;
+  industry?: string | null;
+  data_source?: string | null;
+  data_date?: string | null;
+}
+
+export interface StructuredReportFinancials {
+  revenue?: number | null;
+  net_profit?: number | null;
+  gross_margin?: number | null;
+  net_margin?: number | null;
+  roe?: number | null;
+  roa?: number | null;
+  total_assets?: number | null;
+  total_liabilities?: number | null;
+  equity?: number | null;
+  market_cap?: number | null;
+  pe_ratio?: number | null;
+  pb_ratio?: number | null;
+  ps_ratio?: number | null;
+  close_price?: number | null;
+  asset_liability_ratio?: number | null;
+  debt_to_equity?: number | null;
+  current_ratio?: number | null;
+  quick_ratio?: number | null;
+  operating_cash_flow?: number | null;
+  operating_cash_flow_to_net_profit?: number | null;
+}
+
+export interface StructuredReportDisagreement {
+  topic: string;
+  munger?: string | null;
+  industry?: string | null;
+  audit?: string | null;
+}
+
+export interface StructuredReportSynthesis {
+  company_profile?: string | null;
+  consensus?: string[];
+  disagreements?: StructuredReportDisagreement[];
+  final_score?: number | null;
+  investment_decision?: string | null;
+  insufficient_data?: boolean;
+  core_reasons?: string[];
+  major_risks?: string[];
+}
+
+export interface StructuredReportEvidence {
+  item: string;
+  source?: string | null;
+  source_type?: string | null;
+  source_date?: string | null;
+  excerpt?: string | null;
+  confidence?: number | null;
+}
+
+export interface StructuredReportAgent {
+  name: string;
+  title: string;
+  status: string;
+  score?: number | null;
+  summary?: string | null;
+  thesis?: string[];
+  positives?: string[];
+  risks?: string[];
+  red_flags?: string[];
+  questions?: string[];
+  evidence?: StructuredReportEvidence[];
+  insufficient_data?: boolean;
+  error_message?: string | null;
+}
+
+export interface StructuredReportDataQuality {
+  is_mock?: boolean;
+  quality_note?: string | null;
+  missing_fields?: string[];
+  missing_financial_fields?: string[];
+  completed_agent_count?: number;
+  failed_agent_roles?: string[];
+}
+
+export interface StructuredReportOriginal {
+  content_md: string | null;
+  content_html: string | null;
 }
 
 export interface AnalysisListResponse {

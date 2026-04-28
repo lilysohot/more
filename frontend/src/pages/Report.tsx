@@ -1,35 +1,37 @@
-import React, { useEffect, useState } from 'react';
-import { 
-  Typography, 
-  Card, 
-  Button, 
-  Space, 
-  Tabs, 
-  Spin, 
-  message,
-  Empty,
-} from 'antd';
-import { 
-  ShareAltOutlined, 
-  FileMarkdownOutlined,
-  CodeOutlined,
-  ArrowLeftOutlined,
-} from '@ant-design/icons';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Alert, message } from 'antd';
+import { useNavigate, useParams } from 'react-router-dom';
+import { AgentTriad, EvidenceShelf, RiskLedger } from '@/components/report/ReportAgents';
+import { ReportCommandHeader } from '@/components/report/ReportCommandHeader';
+import { MetricMatrix, VisualInsightPanel } from '@/components/report/ReportMetrics';
+import { ReportEmptyState, ReportFailedState, ReportLoadingState } from '@/components/report/ReportStates';
+import { CompanyProfilePanel, ConsensusDisagreementPanel, HeroVerdict } from '@/components/report/ReportSummaryPanels';
+import { OriginalReportTabs } from '@/components/report/OriginalReportTabs';
 import { useAnalysisStore } from '@/store/analysisStore';
-import ReactMarkdown from 'react-markdown';
+import { getReportCompanyName, hasStructuredReport } from '@/utils/reportViewModel';
 
-const { Title } = Typography;
-const { TabPane } = Tabs;
+const anchorItems = [
+  { href: '#verdict', label: '01 结论' },
+  { href: '#profile', label: '02 公司画像' },
+  { href: '#metrics', label: '03 指标矩阵' },
+  { href: '#visuals', label: '04 图表' },
+  { href: '#agents', label: '05 Agent' },
+  { href: '#consensus', label: '06 共识分歧' },
+  { href: '#risks', label: '07 风险' },
+  { href: '#evidence', label: '08 证据' },
+  { href: '#original', label: '09 原文' },
+];
 
-const ReportPage: React.FC = () => {
+export default function ReportPage() {
   const { analysisId } = useParams<{ analysisId: string }>();
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<'html' | 'md'>('html');
-  
+  const [isChecking, setIsChecking] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   const {
     report,
     currentAnalysis,
+    progress,
     isLoading,
     error,
     fetchReport,
@@ -38,241 +40,160 @@ const ReportPage: React.FC = () => {
   } = useAnalysisStore();
 
   useEffect(() => {
-    if (analysisId) {
-      fetchProgress(analysisId).then((progress) => {
-        if (progress.status === 'completed') {
-          fetchReport(analysisId);
-        } else {
-          message.warning('分析尚未完成，请稍后再试');
-          navigate('/');
+    let cancelled = false;
+
+    async function loadReport() {
+      if (!analysisId) {
+        setIsChecking(false);
+        setLoadError('缺少分析任务 ID');
+        return;
+      }
+
+      setIsChecking(true);
+      setLoadError(null);
+
+      try {
+        const latestProgress = await fetchProgress(analysisId);
+        if (cancelled) return;
+
+        if (latestProgress.status === 'failed') {
+          setLoadError(latestProgress.message || '分析失败，请重新发起任务');
+          return;
         }
-      }).catch(() => {
-        message.error('获取分析状态失败');
-        navigate('/');
-      });
+
+        if (latestProgress.status !== 'completed') {
+          setLoadError(`分析尚未完成，当前阶段：${latestProgress.message}`);
+          return;
+        }
+
+        await fetchReport(analysisId);
+      } catch (requestError) {
+        if (!cancelled) {
+          setLoadError(requestError instanceof Error ? requestError.message : '获取报告失败');
+        }
+      } finally {
+        if (!cancelled) setIsChecking(false);
+      }
     }
-  }, [analysisId]);
+
+    loadReport();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [analysisId, fetchProgress, fetchReport]);
 
   useEffect(() => {
     if (error) {
       message.error(error);
       clearError();
     }
-  }, [error]);
+  }, [clearError, error]);
+
+  const handleBack = () => navigate('/');
+
+  const handleRetry = () => {
+    if (analysisId) {
+      setIsChecking(true);
+      setLoadError(null);
+      fetchReport(analysisId)
+        .catch((requestError) => {
+          setLoadError(requestError instanceof Error ? requestError.message : '获取报告失败');
+        })
+        .finally(() => setIsChecking(false));
+    }
+  };
 
   const handleDownloadMd = () => {
     if (!report?.content_md) return;
-    
-    const blob = new Blob([report.content_md], { type: 'text/markdown' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${currentAnalysis?.company_name || 'report'}_分析报告.md`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    downloadBlob(report.content_md, `${getReportCompanyName(report, currentAnalysis)}_分析报告.md`, 'text/markdown');
     message.success('Markdown 文件下载成功');
   };
 
   const handleDownloadHtml = () => {
     if (!report?.content_html) return;
-    
-    const blob = new Blob([report.content_html], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${currentAnalysis?.company_name || 'report'}_分析报告.html`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    downloadBlob(report.content_html, `${getReportCompanyName(report, currentAnalysis)}_分析报告.html`, 'text/html');
     message.success('HTML 文件下载成功');
   };
 
+  const handleExportPdf = () => {
+    message.info('已打开打印对话框，可选择“另存为 PDF”。');
+    window.print();
+  };
+
   const handleShare = () => {
-    const url = window.location.href;
-    navigator.clipboard.writeText(url).then(() => {
+    navigator.clipboard.writeText(window.location.href).then(() => {
       message.success('链接已复制到剪贴板');
     }).catch(() => {
       message.error('复制链接失败');
     });
   };
 
-  if (isLoading) {
-    return (
-      <div className="flex justify-center items-center min-h-[400px]">
-        <Spin size="large" tip="加载报告中..." />
-      </div>
-    );
+  if (isChecking || isLoading) {
+    return <ReportLoadingState progress={progress} />;
+  }
+
+  if (loadError && !report) {
+    return <ReportFailedState error={loadError} progress={progress} onBack={handleBack} onRetry={handleRetry} />;
   }
 
   if (!report) {
-    return (
-      <Card>
-        <Empty description="报告不存在或尚未生成" />
-        <div className="text-center mt-4">
-          <Button onClick={() => navigate('/')}>返回首页</Button>
-        </div>
-      </Card>
-    );
+    return <ReportEmptyState onBack={handleBack} />;
   }
 
+  const structured = hasStructuredReport(report);
+
   return (
-    <div>
-      <Card className="mb-4">
-        <div className="flex justify-between items-center">
-          <div className="flex items-center">
-            <Button 
-              type="text" 
-              icon={<ArrowLeftOutlined />} 
-              onClick={() => navigate('/')}
-              className="mr-2"
+    <div className="report-workbench">
+      <ReportCommandHeader
+        report={report}
+        currentAnalysis={currentAnalysis}
+        onBack={handleBack}
+        onDownloadMd={handleDownloadMd}
+        onDownloadHtml={handleDownloadHtml}
+        onExportPdf={handleExportPdf}
+        onShare={handleShare}
+      />
+      <div className="report-layout-grid">
+        <nav className="report-anchor-nav" aria-label="报告章节导航">
+          {anchorItems.map((item) => <a key={item.href} href={item.href}>{item.label}</a>)}
+        </nav>
+        <main className="report-main-stack">
+          {structured ? (
+            <>
+              <HeroVerdict report={report} />
+              <CompanyProfilePanel report={report} />
+              <MetricMatrix report={report} />
+              <VisualInsightPanel report={report} />
+              <AgentTriad report={report} />
+              <ConsensusDisagreementPanel report={report} />
+              <RiskLedger report={report} />
+              <EvidenceShelf report={report} />
+            </>
+          ) : (
+            <Alert
+              type="warning"
+              showIcon
+              message="当前报告缺少结构化数据"
+              description="已降级展示原文报告。后端完成结构化报告组装后，本页面会自动展示投研工作台模块。"
             />
-            <Title level={4} className="mb-0">
-              {currentAnalysis?.company_name}（{currentAnalysis?.stock_code || '未知'}）深度分析报告
-            </Title>
-          </div>
-          <Space>
-            <Button 
-              icon={<FileMarkdownOutlined />} 
-              onClick={handleDownloadMd}
-            >
-              Markdown 下载
-            </Button>
-            <Button 
-              icon={<CodeOutlined />} 
-              onClick={handleDownloadHtml}
-            >
-              HTML 下载
-            </Button>
-            <Button 
-              icon={<ShareAltOutlined />} 
-              onClick={handleShare}
-            >
-              分享
-            </Button>
-          </Space>
-        </div>
-      </Card>
-
-      <Card>
-        <Tabs activeKey={activeTab} onChange={(key) => setActiveTab(key as 'html' | 'md')}>
-          <TabPane 
-            tab={<span><CodeOutlined /> HTML 预览</span>} 
-            key="html"
-          >
-            {report.content_html ? (
-              <div 
-                className="report-content"
-                dangerouslySetInnerHTML={{ __html: report.content_html }}
-                style={{
-                  padding: '20px',
-                  backgroundColor: '#fff',
-                  borderRadius: '8px',
-                }}
-              />
-            ) : (
-              <Empty description="HTML 内容不可用" />
-            )}
-          </TabPane>
-          <TabPane 
-            tab={<span><FileMarkdownOutlined /> Markdown 预览</span>} 
-            key="md"
-          >
-            {report.content_md ? (
-              <div className="prose max-w-none p-4">
-                <ReactMarkdown>{report.content_md}</ReactMarkdown>
-              </div>
-            ) : (
-              <Empty description="Markdown 内容不可用" />
-            )}
-          </TabPane>
-        </Tabs>
-      </Card>
-
-      <style>{`
-        .report-content {
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-          line-height: 1.8;
-          color: #333;
-        }
-        .report-content h1 {
-          font-size: 2em;
-          margin: 0.67em 0;
-          border-bottom: 2px solid #667eea;
-          padding-bottom: 10px;
-        }
-        .report-content h2 {
-          font-size: 1.5em;
-          margin: 0.83em 0;
-          color: #667eea;
-        }
-        .report-content h3 {
-          font-size: 1.17em;
-          margin: 1em 0;
-        }
-        .report-content table {
-          width: 100%;
-          border-collapse: collapse;
-          margin: 15px 0;
-        }
-        .report-content th,
-        .report-content td {
-          padding: 12px;
-          text-align: left;
-          border-bottom: 1px solid #eee;
-        }
-        .report-content th {
-          background: #f8f9fa;
-          font-weight: 600;
-        }
-        .report-content tr:hover {
-          background: #f8f9fa;
-        }
-        .report-content blockquote {
-          border-left: 4px solid #667eea;
-          padding-left: 16px;
-          margin: 16px 0;
-          color: #666;
-        }
-        .report-content ul, .report-content ol {
-          padding-left: 24px;
-          margin: 16px 0;
-        }
-        .report-content li {
-          margin: 8px 0;
-        }
-        .prose {
-          max-width: 100%;
-        }
-        .prose h1 {
-          font-size: 2em;
-          margin-bottom: 0.67em;
-        }
-        .prose h2 {
-          font-size: 1.5em;
-          margin-bottom: 0.83em;
-          color: #667eea;
-        }
-        .prose h3 {
-          font-size: 1.17em;
-          margin-bottom: 1em;
-        }
-        .prose table {
-          width: 100%;
-          border-collapse: collapse;
-        }
-        .prose th, .prose td {
-          border: 1px solid #ddd;
-          padding: 8px 12px;
-        }
-        .prose th {
-          background-color: #f5f5f5;
-        }
-      `}</style>
+          )}
+          <OriginalReportTabs report={report} />
+          <p className="report-disclaimer">本报告仅供研究参考，不构成投资建议。模型输出可能受数据延迟、数据缺失、口径差异和推理偏差影响。</p>
+        </main>
+      </div>
     </div>
   );
-};
+}
 
-export default ReportPage;
+function downloadBlob(content: string, filename: string, type: string) {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  URL.revokeObjectURL(url);
+}

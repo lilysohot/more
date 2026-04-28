@@ -4,6 +4,7 @@ import json
 from textwrap import dedent
 
 from app.services.agents.base import AgentParseError, BaseAgent
+from app.services.agents.language import validate_agent_result_in_chinese
 from app.services.agents.parser import StructuredOutputParseError, parse_model_response
 from app.services.agents.schemas import AgentContext, AgentResult, AgentRole
 
@@ -21,44 +22,45 @@ class MungerAgent(BaseAgent[AgentResult]):
         payload = _context_json(context)
         return dedent(
             f"""
-            You are the `munger` role in a multi-agent investment workflow.
+            你是多 Agent 投资分析工作流中的 `munger` 角色。
 
-            Focus areas (must prioritize):
-            1) Business essence and economic model
-            2) Moat durability and erosion risk
-            3) Management quality and integrity signals
-            4) Capital allocation discipline
-            5) Margin of safety from a long-term perspective
+            关注重点（必须优先）：
+            1) 商业本质与经济模型
+            2) 护城河可持续性与被侵蚀风险
+            3) 管理层质量与诚信信号
+            4) 资本配置纪律
+            5) 长期视角下的安全边际
 
-            Boundary rules:
-            - Keep the analysis centered on business quality and compounding logic.
-            - Do not turn this role into a full industry cycle model or forensic audit report.
-            - If key data is missing, state uncertainty explicitly.
+            边界规则：
+            - 分析必须围绕商业质量和复利逻辑展开。
+            - 不要把本角色扩展成完整行业周期模型或法务审计报告。
+            - 如关键数据缺失，必须明确说明不确定性。
 
-            Output contract:
-            1) Return exactly one JSON object.
-            2) Do not return markdown, code fences, or explanations.
-            3) JSON fields and constraints:
-               - role: must be "munger"
-               - summary: non-empty string
-               - score: number in [0, 10]
+            输出契约：
+            1) 只返回一个 JSON 对象。
+            2) 不要返回 markdown、代码块或 JSON 之外的解释。
+            3) JSON 字段与约束：
+               - role: 必须是 "munger"
+               - summary: 非空字符串
+               - score: [0, 10] 范围内的数字
                - thesis: string[]
                - positives: string[]
                - risks: string[]
-               - evidence: object[] with fields:
-                 * item: non-empty string
-                 * source: non-empty string
-                 * source_type: optional string
-                 * source_date: optional string
-                 * excerpt: optional string
-                 * confidence: number in [0, 1]
+               - evidence: object[]，字段包括：
+                 * item: 非空字符串
+                 * source: 非空字符串
+                 * source_type: 可选字符串
+                 * source_date: 可选字符串
+                 * excerpt: 可选字符串
+                 * confidence: [0, 1] 范围内的数字
                - red_flags: string[]
                - questions: string[]
                - insufficient_data: boolean
-            4) Rules:
-               - if insufficient_data == false, evidence must contain at least one item
-               - if insufficient_data == true, questions must contain at least one item
-               - include role-specific red_flags and questions instead of generic placeholders
+            4) 规则：
+               - 如果 insufficient_data == false，evidence 至少包含一项
+               - 如果 insufficient_data == true，questions 至少包含一项
+               - red_flags 和 questions 必须体现本角色视角，不要使用泛泛占位语
+            5) 所有面向报告展示的文本字段必须使用中文；role、source/source_type/source_date、公司名、股票代码、ROE/PE/PB 等特殊标注可以保留原始写法。
 
             Analysis context JSON:
             {payload}
@@ -83,4 +85,12 @@ class MungerAgent(BaseAgent[AgentResult]):
                 raw_output=raw_text,
             )
 
-        return result
+        try:
+            return validate_agent_result_in_chinese(result)
+        except ValueError as exc:
+            raise AgentParseError(
+                role=self.role,
+                message=f"{self.role.value} parse failed: {exc}",
+                raw_output=raw_text,
+                original_exception=exc,
+            ) from exc

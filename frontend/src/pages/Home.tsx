@@ -59,20 +59,20 @@ const HomePage: React.FC = () => {
   useEffect(() => {
     fetchConfigs();
     fetchDefaultConfig();
-  }, []);
+  }, [fetchConfigs, fetchDefaultConfig]);
 
   useEffect(() => {
     if (defaultConfig && !selectedConfigId) {
       setSelectedConfigId(defaultConfig.id);
     }
-  }, [defaultConfig]);
+  }, [defaultConfig, selectedConfigId]);
 
   useEffect(() => {
     if (error) {
       message.error(error);
       clearError();
     }
-  }, [error]);
+  }, [error, clearError]);
 
   useEffect(() => {
     if (currentAnalysis && isAnalyzing) {
@@ -105,7 +105,7 @@ const HomePage: React.FC = () => {
         pollIntervalRef.current = null;
       }
     };
-  }, [currentAnalysis, isAnalyzing]);
+  }, [currentAnalysis, fetchProgress, isAnalyzing, navigate]);
 
   const handleStartAnalysis = async () => {
     if (!inputValue.trim()) {
@@ -113,7 +113,7 @@ const HomePage: React.FC = () => {
       return;
     }
 
-    let companyName = inputValue.trim();
+    const companyName = inputValue.trim();
     let stockCode: string | undefined = undefined;
 
     const codeMatch = inputValue.match(/^(\d{6}|[A-Z]{1,5})$/);

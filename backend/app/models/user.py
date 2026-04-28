@@ -70,6 +70,7 @@ class Report(Base):
     analysis_id = Column(UUID(as_uuid=True), ForeignKey("analyses.id", ondelete="CASCADE"), nullable=False)
     content_md = Column(Text, nullable=True)
     content_html = Column(Text, nullable=True)
+    structured_data_json = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     analysis = relationship("Analysis", back_populates="report")

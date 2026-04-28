@@ -365,7 +365,7 @@ class ReportGenerator:
 
     def _build_orchestration_markdown(self, orchestration_result: OrchestrationResult) -> str:
         synthesis = orchestration_result.synthesis_result
-        failed_roles = [run.role.value for run in orchestration_result.role_runs if run.status.value == "failed"]
+        failed_roles = [self._role_display_name(run.role) for run in orchestration_result.role_runs if run.status.value == "failed"]
 
         lines = [
             "## 多 Agent 综合结论",
@@ -390,7 +390,7 @@ class ReportGenerator:
             lines.extend(["", "### 关键分歧"])
             for item in synthesis.disagreements[:6]:
                 lines.append(
-                    f"- {item.topic}：芒格={item.munger or 'N/A'}；产业={item.industry or 'N/A'}；审计={item.audit or 'N/A'}"
+                    f"- {item.topic}：芒格={item.munger or '未提供'}；产业={item.industry or '未提供'}；审计={item.audit or '未提供'}"
                 )
 
         lines.extend(["", "## 角色观点", ""])
@@ -444,7 +444,7 @@ class ReportGenerator:
 
     def _build_orchestration_html(self, orchestration_result: OrchestrationResult) -> str:
         synthesis = orchestration_result.synthesis_result
-        failed_roles = [run.role.value for run in orchestration_result.role_runs if run.status.value == "failed"]
+        failed_roles = [self._role_display_name(run.role) for run in orchestration_result.role_runs if run.status.value == "failed"]
 
         blocks = [
             '<div class="content">',
@@ -472,7 +472,7 @@ class ReportGenerator:
             blocks.append("<h3>关键分歧</h3>")
             disagreement_items = [
                 (
-                    f"{item.topic}: 芒格={item.munger or 'N/A'}; 产业={item.industry or 'N/A'}; 审计={item.audit or 'N/A'}"
+                    f"{item.topic}：芒格={item.munger or '未提供'}；产业={item.industry or '未提供'}；审计={item.audit or '未提供'}"
                 )
                 for item in synthesis.disagreements[:6]
             ]

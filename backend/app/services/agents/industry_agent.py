@@ -4,6 +4,7 @@ import json
 from textwrap import dedent
 
 from app.services.agents.base import AgentParseError, BaseAgent
+from app.services.agents.language import validate_agent_result_in_chinese
 from app.services.agents.parser import StructuredOutputParseError, parse_model_response
 from app.services.agents.schemas import AgentContext, AgentResult, AgentRole
 
@@ -21,44 +22,45 @@ class IndustryAgent(BaseAgent[AgentResult]):
         payload = _context_json(context)
         return dedent(
             """
-            You are the `industry` role in a multi-agent investment workflow.
+            你是多 Agent 投资分析工作流中的 `industry` 角色。
 
-            Focus areas (must prioritize):
-            1) Value-chain position and bargaining power
-            2) Industry cycle phase and sensitivity
-            3) Supply-demand structure and bottlenecks
-            4) Cost curve position and operating leverage
-            5) Competitive structure and substitution threat
+            关注重点（必须优先）：
+            1) 价值链位置与议价能力
+            2) 行业周期阶段与敏感性
+            3) 供需结构与瓶颈约束
+            4) 成本曲线位置与经营杠杆
+            5) 竞争格局与替代威胁
 
-            Boundary rules:
-            - Keep the analysis centered on external industry dynamics.
-            - Do not turn this role into a full management-quality profile or forensic accounting review.
-            - If key industry evidence is missing, state uncertainty explicitly.
+            边界规则：
+            - 分析必须围绕外部产业动态展开。
+            - 不要把本角色扩展成完整管理层画像或法务会计审查。
+            - 如关键产业证据缺失，必须明确说明不确定性。
 
-            Output contract:
-            1) Return exactly one JSON object.
-            2) Do not return markdown, code fences, or explanations.
-            3) JSON fields and constraints:
-               - role: must be "industry"
-               - summary: non-empty string
-               - score: number in [0, 10]
+            输出契约：
+            1) 只返回一个 JSON 对象。
+            2) 不要返回 markdown、代码块或 JSON 之外的解释。
+            3) JSON 字段与约束：
+               - role: 必须是 "industry"
+               - summary: 非空字符串
+               - score: [0, 10] 范围内的数字
                - thesis: string[]
                - positives: string[]
                - risks: string[]
-               - evidence: object[] with fields:
-                 * item: non-empty string
-                 * source: non-empty string
-                 * source_type: optional string
-                 * source_date: optional string
-                 * excerpt: optional string
-                 * confidence: number in [0, 1]
+               - evidence: object[]，字段包括：
+                 * item: 非空字符串
+                 * source: 非空字符串
+                 * source_type: 可选字符串
+                 * source_date: 可选字符串
+                 * excerpt: 可选字符串
+                 * confidence: [0, 1] 范围内的数字
                - red_flags: string[]
                - questions: string[]
                - insufficient_data: boolean
-            4) Rules:
-               - if insufficient_data == false, evidence must contain at least one item
-               - if insufficient_data == true, questions must contain at least one item
-               - include role-specific red_flags and questions instead of generic placeholders
+            4) 规则：
+               - 如果 insufficient_data == false，evidence 至少包含一项
+               - 如果 insufficient_data == true，questions 至少包含一项
+               - red_flags 和 questions 必须体现本角色视角，不要使用泛泛占位语
+            5) 所有面向报告展示的文本字段必须使用中文；role、source/source_type/source_date、公司名、股票代码、ROE/PE/PB 等特殊标注可以保留原始写法。
 
             Analysis context JSON:
             {payload}
@@ -83,4 +85,12 @@ class IndustryAgent(BaseAgent[AgentResult]):
                 raw_output=raw_text,
             )
 
-        return result
+        try:
+            return validate_agent_result_in_chinese(result)
+        except ValueError as exc:
+            raise AgentParseError(
+                role=self.role,
+                message=f"{self.role.value} parse failed: {exc}",
+                raw_output=raw_text,
+                original_exception=exc,
+            ) from exc
