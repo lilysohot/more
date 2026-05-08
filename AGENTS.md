@@ -1,53 +1,90 @@
 # AGENTS
 
-## Trust These Sources First
-- Prefer executable config over prose. Several docs are stale: they still mention `docs/development.md`, `pnpm test`, and a backend on port `8000`.
+## Trust Config First
+- README files are stale in a few key places: they still mention `docs/development.md`, a backend on `8000`, and a frontend `pnpm test` command that does not exist.
 
-## Installed Skills
-- OpenCode project-local skills are installed in the root `skills/` directory, with supporting material in `references/` and reviewer personas in `agents/`.
-- This project also retains a mirrored `.agents/` copy for compatibility with prior local conventions.
-- When a request matches one of the installed `addyosmani/agent-skills`, prefer the root-level OpenCode layout first rather than re-deriving the workflow from scratch.
+## OpenCode Assets
+- Repo-local OpenCode assets live at the root: `skills/`, `agents/`, and `references/`.
+- `.agents/` is a compatibility mirror and is gitignored; prefer editing the root OpenCode files if you want changes tracked.
+- There are two unrelated `skills` trees: root `skills/` contains OpenCode skills, while `backend/skills/` is a Python package imported by the backend runtime.
+- If you need repo personas or orchestration rules, read `agents/README.md` first.
 
 ## Repo Shape
-- This repo is not a monorepo toolchain; it is two separate apps:
+- This repo is two separate apps, not a workspace toolchain. Run commands inside `frontend/` or `backend/`.
 - `backend/`: FastAPI app, entrypoint `app/main.py`
 - `frontend/`: Vite + React app, entrypoint `src/main.tsx`
 
 ## Verified Commands
-- Frontend uses `pnpm` (`frontend/pnpm-lock.yaml` exists).
+- Frontend uses `pnpm`.
 - Frontend dev: `pnpm dev`
-- Frontend lint: `pnpm lint`
-- Frontend build: `pnpm build`
+- Frontend verification: `pnpm lint` then `pnpm build` (`build` already runs `tsc`).
 - Backend install: `pip install -r requirements.txt`
-- Backend dev server for local frontend proxy: `uvicorn app.main:app --reload --port 8123`
-- Docker full stack: `docker-compose up -d`
+- Run backend commands from `backend/`; `app/core/config.py` loads `.env` from the current working directory.
+- Local backend dev should use port `8123` so the Vite proxy works: `uvicorn app.main:app --reload --port 8123`
+- Full stack: `docker-compose up -d`
 
-## Ports And Routing
-- For local frontend dev, do not assume backend port `8000`.
+## Ports And Env
+- Local Vite dev server is `5173`; Docker frontend is exposed on `3000`.
+- Backend is exposed on `8123` in Docker; do not trust README references to `8000` for host access.
 - `frontend/vite.config.ts` proxies `/api/v1` to `http://localhost:8123`.
-- `frontend/src/utils/request.ts` uses `VITE_API_BASE_URL` if set, otherwise falls back to `/api/v1`.
-- `docker-compose.yml` exposes backend on host port `8123` and frontend on `3000`.
+- `frontend/src/utils/request.ts` uses `VITE_API_BASE_URL` if set, otherwise `/api/v1`.
+- `backend/app/core/config.py` falls back to `postgresql://analyst:password@localhost:5432/analyst_db` only in `DEBUG`; this does not match Docker Compose Postgres (`localhost:5433`, DB `moremoney_db`, user `moremoney`).
 
 ## Backend Gotchas
-- Startup runs `init_db()` from `app.database`, which calls `Base.metadata.create_all()`. Local tables may appear without running Alembic.
-- Alembic is still present in `backend/alembic/`; if you change schema, keep models and migrations aligned.
-- Required backend secrets are enforced in `backend/app/core/config.py`. In non-`DEBUG` mode the app raises on missing `SECRET_KEY`, `ENCRYPTION_KEY`, or `DATABASE_URL`.
-- Redis is optional for active task tracking: `app/services/analysis.py` falls back to in-memory task storage if Redis is unavailable.
-- The current analysis flow is not using live data collection yet. `app/services/analysis.py` explicitly skips collection and ratio calculation and uses mock data/ratios before the LLM/report steps.
+- Startup runs `init_db()`, which calls `Base.metadata.create_all()`. Local tables can appear without running Alembic.
+- If you change schema, keep `backend/app/models/` and `backend/alembic/versions/` aligned.
+- In non-`DEBUG` mode the app refuses to start without `SECRET_KEY`, `ENCRYPTION_KEY`, and `DATABASE_URL`.
+- `app/services/analysis.py` is live-data-first now: it resolves and collects via Tushare first, then falls back to EastMoney.
+- Redis is optional for active-task tracking; `app/services/analysis.py` falls back to in-memory state when Redis is unavailable.
 
 ## Frontend Wiring
 - Router lives in `frontend/src/router/index.tsx`.
-- Auth is enforced in `frontend/src/components/layout/MainLayout.tsx` by checking `localStorage` token state and redirecting to `/login`.
-- Shared API client is `frontend/src/utils/request.ts`; it attaches the bearer token and redirects to `/login` on `401`.
+- Auth gating happens in `frontend/src/components/layout/MainLayout.tsx`.
+- Shared API client lives in `frontend/src/utils/request.ts`; it attaches the bearer token and redirects to `/login` on `401`.
 
-## Verification Reality
-- There is no working frontend test command in `frontend/package.json`.
-- `backend/tests/` and `frontend/tests/` are currently empty, so README test instructions are not a reliable verification path.
-- For frontend changes, prefer `pnpm lint` and `pnpm build`.
+## Verification Notes
+- There is no frontend test script in `frontend/package.json`.
+- Backend tests live under `backend/tests/unit/`.
+- A focused backend test file works, e.g. `pytest -q tests/unit/api/test_analysis_progress_helpers.py`.
+- `pytest -q` from `backend/` currently fails during collection because `tests/unit/skills/test_tushare_skill.py` collides with stale top-level `__pycache__/test_tushare_skill*.pyc`.
 
-## Local Environment Hygiene
-- `.gitignore` ignores `.env`, and this repo already contains local `.env` files. Read them if needed, but do not overwrite or commit env changes unless the user asks.
+## Topic Docs
+- `backend/docs/api-patterns.md`: project-specific rules for FastAPI endpoints and response contracts.
+- `backend/docs/database-rules.md`: async SQLAlchemy, schema, migration, and transaction rules.
+- `backend/docs/testing-standards.md`: test scope, verification commands, and current repo limits.
+- `frontend/docs/page-ui-patterns.md`: page composition, routing, Ant Design/Tailwind usage, and report UI conventions.
+- `frontend/docs/state-request-rules.md`: Zustand ownership, API wrappers, shared request client, and contract-sync rules.
+- `frontend/docs/verification-rules.md`: frontend verification commands, manual smoke checks, and current test limits.
 
-## Debugging
-- Docker backend runs under `debugpy` and exposes port `5678`.
-- VS Code attach config is already checked in at `.vscode/launch.json`.
+## Project Planning Docs
+- Root project-planning content lives in `plans/`, `progress/`, and `docs/`.
+- `plans/`: stores project plan checklists. File names should start with `project_plan_YYYY-MM-DD.md`.
+- `progress/`: stores plan execution progress. File names should start with `project_progress_YYYY-MM-DD.md`.
+- `docs/`: stores project-specific topic documents. File names should start with `project_doc_YYYY-MM-DD.md`.
+- `plans/` file format:
+- File name: `project_plan_YYYY-MM-DD.md`
+- Content: executable task checklist extracted from project-specific docs.
+- Task format: `[x] Task description`, e.g. `[x] Refine backend topic rules`.
+- After a task is completed and passes testing and review, change `[x]` to `[√]` and add the completed item to the matching file in `progress/`, e.g. `[√] Refine backend topic rules`.
+- `progress/` file format:
+- File name: `project_progress_YYYY-MM-DD.md`
+- Content: execution progress for the plan checklist.
+
+## Module Rule Files
+- `backend/app/api/AGENTS.md`: route-layer rules and API contract guardrails.
+- `backend/app/services/AGENTS.md`: database workflow and transaction-boundary rules.
+- `backend/app/models/AGENTS.md`: schema conventions tied to this project.
+- `backend/alembic/AGENTS.md`: migration authoring rules.
+- `backend/tests/AGENTS.md`: project-specific testing rules.
+- `frontend/src/router/AGENTS.md`: route registration and auth-entry rules.
+- `frontend/src/pages/AGENTS.md`: page orchestration, navigation, and state-boundary rules.
+- `frontend/src/components/AGENTS.md`: component boundary and report UI rules.
+- `frontend/src/api/AGENTS.md`: shared HTTP wrapper and typed endpoint rules.
+- `frontend/src/store/AGENTS.md`: Zustand state ownership and async workflow rules.
+- `frontend/src/utils/AGENTS.md`: request client and helper-function rules.
+- `frontend/src/types/AGENTS.md`: backend contract sync and naming rules.
+- `frontend/src/styles/AGENTS.md`: global style and report visual-system rules.
+
+## Local Hygiene
+- `.env` files are gitignored; the repo already contains local `frontend/.env` and `backend/.env`, so avoid overwriting or committing env changes unless asked.
+- Docker backend runs under `debugpy` and exposes `5678`; the shared VS Code attach config is `.vscode/launch.json`.
