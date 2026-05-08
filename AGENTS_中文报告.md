@@ -168,20 +168,20 @@
    - 再看对应模块内 `AGENTS.md`
    - 必要时再看 `backend/docs/` 或 `frontend/docs/` 下的专题规范
 
-7. 根目录项目规划文档目录docs/：
-   - `docs/plans/`：存储项目计划清单，文件名称以 `project_plan_YYYY-MM-DD.md` 开头，用于记录项目计划
-   - `docs/progress/`：存储计划执行进度，文件名称以 `project_progress_YYYY-MM-DD.md` 开头，用于记录项目计划清单执行情况
-   - `docs/titles/`：存储项目专题文档，文件名称以 `project_doc_YYYY-MM-DD.md` 开头，用于存储项目专题文档
+7. 根目录项目规划文档内容位于 `docs/`：
+   - `docs/plans/`：存储项目计划清单，新文件名称以主题文件名称为开头，例如 `project_plan_YYYY-MM-DD.md`
+   - `docs/progress/`：存储计划执行进度，新文件名称以主题文件名称为开头，例如 `project_progress_YYYY-MM-DD.md`
+   - 项目专题文档当前直接存放在根 `docs/` 下；如果新增按日期命名的专题文档，文件名称以主题文件名称为开头，例如 `project_doc_YYYY-MM-DD.md`
         
 8. `docs/plans/` 文件内容格式：
-   - 文件名称：`project_plan_YYYY-MM-DD.md`
+   - 文件名称：主题文件名称_YYYY-MM-DD.md，例如 `project_plan_YYYY-MM-DD.md`
    - 内容：项目计划清单，用于从项目专属文档中提取成可执行的任务清单
    - 任务清单格式：以 `[x] 任务描述`
    - 例如：`[x] 完善后端专题规范`
    - 任务完成并通过测试和审核后，将任务描述前的 `[x]` 改成 `[√]`，并添加到 `docs/progress/` 目录下对应文件中
    - 例如：`[√] 完善后端专题规范`
 9. `docs/progress/` 文件内容格式：
-   - 文件名称：`project_progress_YYYY-MM-DD.md`
+   - 文件名称：主题文件名称_YYYY-MM-DD.md，例如 `project_progress_YYYY-MM-DD.md`
    - 内容：计划执行进度，用于记录项目计划清单执行情况
 
 ## 九、本地环境与调试

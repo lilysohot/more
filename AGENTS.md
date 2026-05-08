@@ -57,17 +57,17 @@
 - `frontend/docs/verification-rules.md`: frontend verification commands, manual smoke checks, and current test limits.
 
 ## Project Planning Docs
-- Root project-planning content lives in `plans/`, `progress/`, and `docs/`.
-- `plans/`: stores project plan checklists. File names should start with `project_plan_YYYY-MM-DD.md`.
-- `progress/`: stores plan execution progress. File names should start with `project_progress_YYYY-MM-DD.md`.
-- `docs/`: stores project-specific topic documents. File names should start with `project_doc_YYYY-MM-DD.md`.
-- `plans/` file format:
-- File name: `project_plan_YYYY-MM-DD.md`
+- Root project-planning content lives under `docs/`.
+- `docs/plans/`: stores project plan checklists. New file names should use the topic-file prefix pattern, e.g. `project_plan_YYYY-MM-DD.md`.
+- `docs/progress/`: stores plan execution progress. New file names should use the topic-file prefix pattern, e.g. `project_progress_YYYY-MM-DD.md`.
+- Project-specific topic docs currently live directly in `docs/`. If you add a dated project topic doc, its file name should use the topic-file prefix pattern, e.g. `project_doc_YYYY-MM-DD.md`; there is no separate `docs/titles/` directory today.
+- `docs/plans/` file format:
+- File name: `<topic-file-name>_YYYY-MM-DD.md`, e.g. `project_plan_YYYY-MM-DD.md`
 - Content: executable task checklist extracted from project-specific docs.
 - Task format: `[x] Task description`, e.g. `[x] Refine backend topic rules`.
-- After a task is completed and passes testing and review, change `[x]` to `[√]` and add the completed item to the matching file in `progress/`, e.g. `[√] Refine backend topic rules`.
-- `progress/` file format:
-- File name: `project_progress_YYYY-MM-DD.md`
+- After a task is completed and passes testing and review, change `[x]` to `[√]` and add the completed item to the matching file in `docs/progress/`, e.g. `[√] Refine backend topic rules`.
+- `docs/progress/` file format:
+- File name: `<topic-file-name>_YYYY-MM-DD.md`, e.g. `project_progress_YYYY-MM-DD.md`
 - Content: execution progress for the plan checklist.
 
 ## Module Rule Files
