@@ -1,7 +1,7 @@
 import { Alert, Card, Collapse, Empty, Progress, Space, Table, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { Report, StructuredReportAgent, StructuredReportEvidence } from '@/types';
-import { formatPercent, formatScore, getScoreTone, NO_DATA } from '@/utils/reportViewModel';
+import { formatPercent, formatPlainDate, formatScore, formatSourceTypeLabel, getScoreTone, NO_DATA } from '@/utils/reportViewModel';
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -164,8 +164,8 @@ function EvidenceList({ evidence }: { evidence: StructuredReportEvidence[] }) {
           <Paragraph>{item.excerpt || '暂无摘录。'}</Paragraph>
           <Space wrap>
             <Tag>{item.source || NO_DATA}</Tag>
-            <Tag>{item.source_type || '来源类型未标注'}</Tag>
-            <Tag>{item.source_date || '日期未知'}</Tag>
+            <Tag>{item.source_type ? formatSourceTypeLabel(item.source_type) : '来源类型未标注'}</Tag>
+            <Tag>{item.source_date ? formatPlainDate(item.source_date) : '日期未知'}</Tag>
           </Space>
           {typeof item.confidence === 'number' ? <Progress percent={Math.round(item.confidence * 100)} size="small" format={() => formatPercent(item.confidence ? item.confidence * 100 : 0)} /> : null}
         </Card>

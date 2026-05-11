@@ -75,8 +75,11 @@ export interface Analysis {
   company_name: string;
   stock_code: string | null;
   status: string;
+  current_stage?: string | null;
+  error_message?: string | null;
   created_at: string;
   completed_at: string | null;
+  failed_at?: string | null;
 }
 
 export interface AnalysisCreate {
@@ -92,6 +95,17 @@ export interface AnalysisProgress {
   progress_stage?: string | null;
   progress: number;
   message: string;
+}
+
+export interface AnalysisEvent {
+  id: string;
+  analysis_id: string;
+  stage?: string | null;
+  level: string;
+  event_type: string;
+  message: string;
+  payload_json?: Record<string, unknown> | null;
+  created_at: string;
 }
 
 export interface Report {

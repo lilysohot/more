@@ -4,6 +4,52 @@ export const NO_DATA = '暂无数据';
 
 export const FINANCIAL_FIELD_COUNT = 20;
 
+const AGENT_ROLE_LABELS: Record<string, string> = {
+  munger: '芒格视角',
+  industry: '产业视角',
+  audit: '审计视角',
+  synthesis: '综合汇总',
+};
+
+const FINANCIAL_FIELD_LABELS: Record<string, string> = {
+  revenue: '营业收入',
+  net_profit: '净利润',
+  gross_margin: '毛利率',
+  net_margin: '净利率',
+  roe: 'ROE',
+  roa: 'ROA',
+  total_assets: '总资产',
+  total_liabilities: '总负债',
+  equity: '净资产',
+  market_cap: '市值',
+  pe_ratio: 'PE',
+  pb_ratio: 'PB',
+  ps_ratio: 'PS',
+  close_price: '收盘价',
+  asset_liability_ratio: '资产负债率',
+  debt_to_equity: '产权比率',
+  current_ratio: '流动比率',
+  quick_ratio: '速动比率',
+  operating_cash_flow: '经营现金流',
+  operating_cash_flow_to_net_profit: '现金流/净利',
+};
+
+const SOURCE_TYPE_LABELS: Record<string, string> = {
+  annual_report: '年报',
+  'annual-report': '年报',
+  quarterly_report: '季报',
+  'quarterly-report': '季报',
+  research: '研究报告',
+  industry_report: '行业报告',
+  'industry-report': '行业报告',
+  earnings_call: '业绩会纪要',
+  'earnings-call': '业绩会纪要',
+  announcement: '公告',
+  news: '新闻',
+  unit_test: '测试夹具',
+  'unit-test': '测试夹具',
+};
+
 export function hasStructuredReport(report: Report | null): report is Report {
   return Boolean(
     report?.synthesis
@@ -65,11 +111,38 @@ export function formatScore(value?: number | null): string {
   return `${formatFixed(value, 1)} / 10`;
 }
 
+export function formatAgentRoleLabel(role?: string | null): string {
+  if (!role) return NO_DATA;
+  return AGENT_ROLE_LABELS[role] || role;
+}
+
+export function formatFinancialFieldLabel(field?: string | null): string {
+  if (!field) return NO_DATA;
+  return FINANCIAL_FIELD_LABELS[field] || field;
+}
+
+export function formatSourceTypeLabel(sourceType?: string | null): string {
+  if (!sourceType) return NO_DATA;
+  return SOURCE_TYPE_LABELS[sourceType] || sourceType.replace(/[_-]/g, ' ');
+}
+
 export function getScoreTone(score?: number | null): 'positive' | 'neutral' | 'risk' | 'muted' {
   if (!isFiniteNumber(score)) return 'muted';
   if (score >= 8) return 'positive';
   if (score >= 6) return 'neutral';
   return 'risk';
+}
+
+export function isLowConfidenceReport(report: Report): boolean {
+  const coverage = getFinancialCoverage(report.financials);
+  const missingFinancialCount = report.data_quality?.missing_financial_fields?.length ?? 0;
+  const failedRoles = report.data_quality?.failed_agent_roles?.length ?? 0;
+  return Boolean(
+    report.synthesis?.insufficient_data
+    || failedRoles > 0
+    || missingFinancialCount >= 3
+    || (coverage.total > 0 && coverage.covered / coverage.total < 0.75)
+  );
 }
 
 export function getFinancialCoverage(financials?: StructuredReportFinancials | null): { covered: number; total: number } {

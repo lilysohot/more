@@ -1,7 +1,7 @@
 import { Alert, Card, Col, Empty, Progress, Row, Space, Table, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { Report, StructuredReportDisagreement } from '@/types';
-import { formatMoney, formatScore, getFinancialCoverage, getScoreTone, NO_DATA } from '@/utils/reportViewModel';
+import { formatMoney, formatPlainDate, formatScore, getFinancialCoverage, getScoreTone, isLowConfidenceReport, NO_DATA } from '@/utils/reportViewModel';
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -14,12 +14,7 @@ export function HeroVerdict({ report }: ReportPanelProps) {
   const score = synthesis?.final_score ?? null;
   const tone = getScoreTone(score);
   const scorePercent = typeof score === 'number' ? Math.max(0, Math.min(100, score * 10)) : 0;
-  const coverage = getFinancialCoverage(report.financials);
-  const isLowConfidence = Boolean(
-    synthesis?.insufficient_data
-    || report.data_quality?.missing_financial_fields?.length
-    || coverage.covered < coverage.total
-  );
+  const isLowConfidence = isLowConfidenceReport(report);
 
   return (
     <section id="verdict" className={`report-panel report-verdict report-tone-${tone}`}>
@@ -69,10 +64,10 @@ export function CompanyProfilePanel({ report }: ReportPanelProps) {
         {tags.map((tag) => <Tag key={tag}>{tag}</Tag>)}
       </Space>
       <Row gutter={[16, 16]} className="report-profile-stats">
-        <Col xs={12} md={6}><MiniStat label="市值" value={formatMoney(report.financials?.market_cap)} /></Col>
-        <Col xs={12} md={6}><MiniStat label="营业收入" value={formatMoney(report.financials?.revenue)} /></Col>
-        <Col xs={12} md={6}><MiniStat label="净利润" value={formatMoney(report.financials?.net_profit)} /></Col>
-        <Col xs={12} md={6}><MiniStat label="数据日期" value={report.company?.data_date || NO_DATA} /></Col>
+        <Col xs={24} sm={12} md={6}><MiniStat label="市值" value={formatMoney(report.financials?.market_cap)} /></Col>
+        <Col xs={24} sm={12} md={6}><MiniStat label="营业收入" value={formatMoney(report.financials?.revenue)} /></Col>
+        <Col xs={24} sm={12} md={6}><MiniStat label="净利润" value={formatMoney(report.financials?.net_profit)} /></Col>
+        <Col xs={24} sm={12} md={6}><MiniStat label="数据日期" value={formatPlainDate(report.company?.data_date) || NO_DATA} /></Col>
       </Row>
     </section>
   );
