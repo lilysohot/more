@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     DEFAULT_LLM_PROVIDER: str = "dashscope"
     DEFAULT_LLM_MODEL: str = "qwen3.5-plus"
     DEFAULT_LLM_API_KEY: str = ""  # 必须从环境变量设置
+    TUSHARE_TOKEN: str = ""
     
     @property
     def allowed_origins_list(self) -> List[str]:

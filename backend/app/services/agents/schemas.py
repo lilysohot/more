@@ -69,6 +69,9 @@ class SourceItem(BaseModel):
 class DataQuality(BaseModel):
     is_mock: bool = False
     missing_fields: List[str] = Field(default_factory=list)
+    missing_core_fields: List[str] = Field(default_factory=list)
+    missing_ratio: Optional[float] = None
+    insufficient_data: bool = False
     quality_note: Optional[str] = None
 
 

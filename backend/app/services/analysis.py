@@ -11,17 +11,18 @@
 """
 
 import logging
-import os
 import re
 from datetime import datetime
+from html import escape
 from sqlalchemy import select
 from uuid import UUID
 
 from app.database import AsyncSessionLocal
-from app.models.user import Analysis, Report, APIConfig, AgentRun
+from app.models.user import Analysis, Report, APIConfig, AgentRun, AnalysisEvent
 from app.services.agents import AgentContext, AgentOrchestrator, AgentRole, AgentRunStatus, ProgressStage
 from app.services.agents.orchestrator import OrchestrationResult
 from app.services.data_collector import DataCollector
+from app.services.financial_snapshot import FinancialSnapshotCollector, evaluate_snapshot_quality
 from app.services.report_generator import ReportGenerator
 from app.services.structured_report import build_structured_report_payload
 from app.utils.encryption import decrypt_api_key
@@ -152,11 +153,11 @@ class AnalysisService:
         )
     """
     
-    def __init__(self):
+    def __init__(self, *, snapshot_collector_factory=None):
         """
         初始化分析服务
         """
-        pass
+        self._snapshot_collector_factory = snapshot_collector_factory or FinancialSnapshotCollector
 
     @staticmethod
     def _looks_like_stock_identifier(value: str | None) -> bool:
@@ -191,7 +192,7 @@ class AnalysisService:
             raw_stock_code = raw_company_name.upper()
 
         company_name_hint = raw_company_name if raw_company_name and raw_company_name != raw_stock_code else None
-        tushare_token = os.getenv("TUSHARE_TOKEN") or None
+        tushare_token = settings.TUSHARE_TOKEN or None
         collector = DataCollector()
 
         if raw_stock_code:
@@ -263,31 +264,119 @@ class AnalysisService:
         }
         _add_active_task(analysis_id, task_info)
 
-        logger.info(f"[Task {analysis_id}] Starting analysis for company: {company_name}")
-
         try:
+            logger.info(f"[Task {analysis_id}] Starting analysis for company: {company_name}")
+            await self._persist_task_event(
+                analysis_id,
+                stage="pending",
+                level="info",
+                event_type="task_started",
+                message=f"开始分析任务：{company_name}",
+                payload={
+                    "company_name": company_name,
+                    "stock_code": stock_code,
+                    "include_charts": include_charts,
+                    "api_config_id": api_config_id,
+                },
+            )
             logger.info(f"[Task {analysis_id}] Step 1/6: Collecting company data")
             task_info["current_step"] = "collecting_data"
             _update_active_task(analysis_id, task_info)
             await self._update_status(analysis_id, "collecting_data")
-            company_data = await self._collect_company_data(company_name=company_name, stock_code=stock_code)
+            await self._persist_task_event(
+                analysis_id,
+                stage="collecting_data",
+                level="info",
+                event_type="stage_started",
+                message="开始采集公司数据",
+                payload={"company_name": company_name, "stock_code": stock_code},
+            )
+            await self._persist_task_event(
+                analysis_id,
+                stage="collecting_data",
+                level="info",
+                event_type="provider_collection_started",
+                message="开始调用财务快照采集器",
+                payload={"company_name": company_name, "stock_code": stock_code},
+            )
+            try:
+                company_data = await self._collect_company_data(company_name=company_name, stock_code=stock_code)
+            except Exception as exc:
+                await self._persist_task_event(
+                    analysis_id,
+                    stage="collecting_data",
+                    level="error",
+                    event_type="provider_collection_failed",
+                    message=str(exc) or "财务快照采集失败",
+                    payload={"error_type": type(exc).__name__},
+                )
+                raise
             stock_code = company_data.get("stock_code") or stock_code
             logger.info(
                 f"[Task {analysis_id}] Step 1/6 completed: Collected {company_data.get('data_source')} data for {company_name} ({stock_code})"
+            )
+            await self._persist_task_event(
+                analysis_id,
+                stage="collecting_data",
+                level="info",
+                event_type="provider_collection_completed",
+                message="财务快照采集完成",
+                payload={
+                    "providers_used": sorted({source.split(".")[0] for source_list in (company_data.get("field_sources") or {}).values() for source in source_list}),
+                    "error_count": len(company_data.get("errors") or []),
+                    "missing_fields_count": len(company_data.get("missing_fields") or []),
+                    "missing_core_fields": company_data.get("missing_core_fields") or [],
+                },
+            )
+            await self._persist_task_event(
+                analysis_id,
+                stage="collecting_data",
+                level="info",
+                event_type="stage_completed",
+                message="公司数据采集完成",
+                payload={
+                    "company_name": company_name,
+                    "stock_code": stock_code,
+                    "data_source": company_data.get("data_source"),
+                    "data_date": company_data.get("data_date"),
+                    "insufficient_data": company_data.get("insufficient_data"),
+                },
             )
             
             logger.info(f"[Task {analysis_id}] Step 2/6: Calculating financial ratios")
             task_info["current_step"] = "calculating_ratios"
             _update_active_task(analysis_id, task_info)
             await self._update_status(analysis_id, "calculating_ratios")
+            await self._persist_task_event(
+                analysis_id,
+                stage="calculating_ratios",
+                level="info",
+                event_type="stage_started",
+                message="开始计算财务比率",
+            )
             financial_ratios = await self._calculate_financial_ratios(company_data)
             logger.info(f"[Task {analysis_id}] Step 2/6 completed: Calculated financial ratios")
+            await self._persist_task_event(
+                analysis_id,
+                stage="calculating_ratios",
+                level="info",
+                event_type="stage_completed",
+                message="财务比率计算完成",
+                payload={"available_ratio_keys": sorted(financial_ratios.keys())},
+            )
             
             # 步骤3: 构建 AgentContext
             logger.info(f"[Task {analysis_id}] Step 3/6: Building agent context")
             task_info["current_step"] = ProgressStage.BUILDING_CONTEXT.value
             _update_active_task(analysis_id, task_info)
             await self._update_status(analysis_id, ProgressStage.BUILDING_CONTEXT.value)
+            await self._persist_task_event(
+                analysis_id,
+                stage=ProgressStage.BUILDING_CONTEXT.value,
+                level="info",
+                event_type="stage_started",
+                message="开始构建 Agent 上下文",
+            )
             agent_context = self._build_agent_context(
                 analysis_id=analysis_id,
                 company_name=company_name,
@@ -296,18 +385,97 @@ class AnalysisService:
                 financial_ratios=financial_ratios,
             )
             logger.info(f"[Task {analysis_id}] Step 3/6 completed: Agent context ready")
+            await self._persist_task_event(
+                analysis_id,
+                stage=ProgressStage.BUILDING_CONTEXT.value,
+                level="info",
+                event_type="stage_completed",
+                message="Agent 上下文构建完成",
+                payload={
+                    "missing_core_fields": agent_context.data_quality.missing_core_fields,
+                    "insufficient_data": agent_context.data_quality.insufficient_data,
+                },
+            )
 
             # 步骤4: 编排多 Agent 执行
             logger.info(f"[Task {analysis_id}] Step 4/6: Running multi-agent orchestration")
-            llm_config = await self._get_llm_config(user_id, api_config_id)
+            task_info["current_step"] = "resolving_llm_config"
+            _update_active_task(analysis_id, task_info)
+            await self._persist_task_event(
+                analysis_id,
+                stage="resolving_llm_config",
+                level="info",
+                event_type="llm_config_started",
+                message="开始解析 LLM 配置",
+                payload={"api_config_id": api_config_id},
+            )
+            try:
+                llm_config = await self._get_llm_config(user_id, api_config_id)
+            except Exception as exc:
+                await self._persist_task_event(
+                    analysis_id,
+                    stage="resolving_llm_config",
+                    level="error",
+                    event_type="llm_config_failed",
+                    message=str(exc) or "LLM 配置读取失败",
+                    payload={"error_type": type(exc).__name__},
+                )
+                raise
             logger.info(f"[Task {analysis_id}] Using LLM provider: {llm_config['provider']}")
+            await self._persist_task_event(
+                analysis_id,
+                stage="resolving_llm_config",
+                level="info",
+                event_type="llm_config_completed",
+                message="LLM 配置读取完成",
+                payload={
+                    "provider": llm_config.get("provider"),
+                    "model_version": llm_config.get("model_version"),
+                },
+            )
+            await self._persist_task_event(
+                analysis_id,
+                stage="running_multi_agent_orchestration",
+                level="info",
+                event_type="stage_started",
+                message="开始执行多 Agent 编排",
+                payload={
+                    "provider": llm_config.get("provider"),
+                    "model_version": llm_config.get("model_version"),
+                },
+            )
 
             async def on_stage(stage: ProgressStage):
                 task_info["current_step"] = stage.value
                 _update_active_task(analysis_id, task_info)
                 await self._update_status(analysis_id, stage.value)
+                await self._persist_task_event(
+                    analysis_id,
+                    stage=stage.value,
+                    level="info",
+                    event_type="stage_started",
+                    message=f"进入阶段：{stage.value}",
+                )
 
-            orchestrator = AgentOrchestrator(llm_config=llm_config, on_stage=on_stage)
+            async def on_role_event(role: AgentRole, status: AgentRunStatus, payload: dict | None):
+                event_type_map = {
+                    AgentRunStatus.RUNNING: "agent_started",
+                    AgentRunStatus.COMPLETED: "agent_completed",
+                    AgentRunStatus.FAILED: "agent_failed",
+                }
+                event_type = event_type_map.get(status)
+                if event_type is None:
+                    return
+                await self._persist_task_event(
+                    analysis_id,
+                    stage=f"agent.{role.value}",
+                    level="error" if status == AgentRunStatus.FAILED else "info",
+                    event_type=event_type,
+                    message=f"{role.value} {status.value}",
+                    payload={"role": role.value, "status": status.value, **(payload or {})},
+                )
+
+            orchestrator = AgentOrchestrator(llm_config=llm_config, on_stage=on_stage, on_role_event=on_role_event)
             orchestration_result = await orchestrator.run(agent_context)
             await self._save_agent_runs(
                 analysis_id=analysis_id,
@@ -316,12 +484,31 @@ class AnalysisService:
             )
             analysis_result = self._render_orchestration_markdown(orchestration_result)
             logger.info(f"[Task {analysis_id}] Step 4/6 completed: Multi-agent orchestration done")
+            await self._persist_task_event(
+                analysis_id,
+                stage="running_multi_agent_orchestration",
+                level="info",
+                event_type="stage_completed",
+                message="多 Agent 编排完成",
+                payload={
+                    "failed_roles": [role.value for role in orchestration_result.failed_roles],
+                    "final_score": orchestration_result.synthesis_result.final_score,
+                    "investment_decision": orchestration_result.synthesis_result.investment_decision,
+                },
+            )
             
             # 步骤5: 生成报告
             logger.info(f"[Task {analysis_id}] Step 5/6: Generating report")
             task_info["current_step"] = ProgressStage.GENERATING_REPORT.value
             _update_active_task(analysis_id, task_info)
             await self._update_status(analysis_id, ProgressStage.GENERATING_REPORT.value)
+            await self._persist_task_event(
+                analysis_id,
+                stage=ProgressStage.GENERATING_REPORT.value,
+                level="info",
+                event_type="stage_started",
+                message="开始生成报告",
+            )
             
             report_generator = ReportGenerator()
             content_md, content_html = await report_generator.generate(
@@ -331,35 +518,102 @@ class AnalysisService:
                 orchestration_result=orchestration_result,
                 include_charts=include_charts,
             )
+            content_md, content_html = self._inject_data_quality_notice(
+                content_md=content_md,
+                content_html=content_html,
+                company_data=company_data,
+            )
             logger.info(f"[Task {analysis_id}] Step 5/6 completed: Report generated")
+            await self._persist_task_event(
+                analysis_id,
+                stage=ProgressStage.GENERATING_REPORT.value,
+                level="info",
+                event_type="stage_completed",
+                message="报告生成完成",
+                payload={
+                    "markdown_length": len(content_md),
+                    "html_length": len(content_html),
+                },
+            )
             
             # 步骤6: 保存报告
             logger.info(f"[Task {analysis_id}] Step 6/6: Saving report to database")
             task_info["current_step"] = ProgressStage.SAVING_REPORT.value
             _update_active_task(analysis_id, task_info)
             await self._update_status(analysis_id, ProgressStage.SAVING_REPORT.value)
+            await self._persist_task_event(
+                analysis_id,
+                stage=ProgressStage.SAVING_REPORT.value,
+                level="info",
+                event_type="report_save_started",
+                message="开始保存报告到数据库",
+            )
             structured_data = build_structured_report_payload(
                 company_data=company_data,
                 financial_ratios=financial_ratios,
                 orchestration_result=orchestration_result,
             )
-            await self._save_report(analysis_id, content_md, content_html, structured_data)
+            try:
+                await self._save_report(analysis_id, content_md, content_html, structured_data)
+            except Exception as exc:
+                await self._persist_task_event(
+                    analysis_id,
+                    stage=ProgressStage.SAVING_REPORT.value,
+                    level="error",
+                    event_type="report_save_failed",
+                    message=str(exc) or "报告保存失败",
+                    payload={"error_type": type(exc).__name__},
+                )
+                raise
+            await self._persist_task_event(
+                analysis_id,
+                stage=ProgressStage.SAVING_REPORT.value,
+                level="info",
+                event_type="report_save_completed",
+                message="报告保存完成",
+            )
             
             # 完成
             task_info["current_step"] = "completed"
             _update_active_task(analysis_id, task_info)
             await self._update_status(analysis_id, "completed")
-            
             elapsed_time = time.time() - start_time
+            await self._persist_task_event(
+                analysis_id,
+                stage="completed",
+                level="info",
+                event_type="task_completed",
+                message="分析任务完成",
+                payload={"elapsed_time_seconds": round(elapsed_time, 2)},
+            )
+            
             logger.info(f"[Task {analysis_id}] Analysis completed successfully in {elapsed_time:.2f}s")
             
         except Exception as e:
             elapsed_time = time.time() - start_time
             logger.exception(f"[Task {analysis_id}] Analysis failed after {elapsed_time:.2f}s: {str(e)}")
+            failed_stage = task_info.get("current_step") or "pending"
             task_info["current_step"] = "failed"
             task_info["error"] = str(e)
             _update_active_task(analysis_id, task_info)
-            await self._update_status(analysis_id, "failed")
+            await self._persist_task_event(
+                analysis_id,
+                stage=failed_stage,
+                level="error",
+                event_type="task_failed",
+                message=str(e) or f"{failed_stage} 阶段失败",
+                payload={
+                    "error_type": type(e).__name__,
+                    "current_stage": failed_stage,
+                    "elapsed_time_seconds": round(elapsed_time, 2),
+                },
+            )
+            await self._update_status(
+                analysis_id,
+                "failed",
+                current_stage=failed_stage,
+                error_message=str(e) or type(e).__name__,
+            )
         finally:
             _remove_active_task(analysis_id)
             logger.info(f"[Task {analysis_id}] Removed from active tasks")
@@ -393,33 +647,22 @@ class AnalysisService:
             sources=[],
             data_quality={
                 "is_mock": False,
-                "quality_note": self._build_data_quality_note(company_data),
+                "missing_fields": company_data.get("missing_fields") or [],
+                "missing_core_fields": company_data.get("missing_core_fields") or [],
+                "missing_ratio": company_data.get("missing_ratio"),
+                "insufficient_data": company_data.get("insufficient_data", False),
+                "quality_note": company_data.get("quality_note"),
             },
         )
 
     async def _collect_company_data(self, *, company_name: str, stock_code: str | None) -> dict:
-        """Collect real company data with Tushare as the primary source."""
-        tushare_token = os.getenv("TUSHARE_TOKEN") or None
-
-        try:
-            skill = await get_tushare_skill(token=tushare_token)
-            company_data = await skill.collect_all(stock_code=stock_code, company_name=company_name)
-            if company_data.get("company_name") is None:
-                company_data["company_name"] = company_name
-            if company_data.get("stock_code") is None:
-                company_data["stock_code"] = stock_code
-            company_data["exchange"] = company_data.get("exchange") or None
-            return company_data
-        except Exception as e:
-            logger.warning(f"Tushare collection failed for {company_name} ({stock_code}): {e}")
-
-        logger.info(f"Falling back to EastMoney collector for {company_name} ({stock_code})")
-        collector = DataCollector()
-        company_data = await collector.collect(company_name, stock_code)
+        """Collect a normalized company snapshot through the multi-provider collector."""
+        collector = self._snapshot_collector_factory()
+        company_data = await collector.collect(company_name=company_name, stock_code=stock_code)
         company_data["company_name"] = company_data.get("company_name") or company_name
         company_data["stock_code"] = company_data.get("stock_code") or stock_code
-        company_data["data_source"] = company_data.get("data_source") or "eastmoney"
-        return company_data
+        company_data["exchange"] = company_data.get("exchange") or None
+        return self._apply_snapshot_quality(company_data)
 
     async def _calculate_financial_ratios(self, company_data: dict) -> dict:
         collector = DataCollector()
@@ -438,6 +681,67 @@ class AnalysisService:
             return f"使用实时数据来源：{source}。"
 
         return f"使用实时数据来源：{source}，但缺失字段：{', '.join(missing_fields)}。"
+
+    @staticmethod
+    def _compose_data_quality_notice(company_data: dict) -> str:
+        quality_note = str(company_data.get("quality_note") or "").strip()
+        if quality_note:
+            return quality_note
+
+        source = company_data.get("data_source") or "unknown"
+        missing_core_fields = [str(field) for field in (company_data.get("missing_core_fields") or []) if field]
+        if missing_core_fields:
+            visible_missing = "、".join(missing_core_fields[:6])
+            return f"当前数据源 {source} 的核心财务字段缺失，缺失项包括：{visible_missing}。"
+
+        if company_data.get("insufficient_data"):
+            return f"当前数据源 {source} 的财务快照不足以支撑正式分析。"
+
+        return f"当前数据源 {source} 的财务快照存在缺口，请结合结构化数据质量字段审阅。"
+
+    @classmethod
+    def _inject_data_quality_notice(cls, *, content_md: str, content_html: str, company_data: dict) -> tuple[str, str]:
+        if not company_data.get("insufficient_data"):
+            return content_md, content_html
+
+        notice = cls._compose_data_quality_notice(company_data)
+        if not notice:
+            return content_md, content_html
+
+        markdown_notice = "## 数据不足说明\n\n" f"> {notice}\n\n"
+        if markdown_notice not in content_md:
+            separator = "\n---\n\n"
+            if separator in content_md:
+                content_md = content_md.replace(separator, f"{separator}{markdown_notice}", 1)
+            else:
+                content_md = f"{markdown_notice}{content_md}"
+
+        html_notice = (
+            '<div class="data-quality-warning" '
+            'style="margin: 16px 0; padding: 16px; border: 1px solid #f5c2c7; '
+            'border-radius: 10px; background: #fff3f4; color: #842029;">'
+            f"<strong>数据不足说明：</strong>{escape(notice)}"
+            "</div>"
+        )
+        if html_notice not in content_html:
+            container_marker = '<div class="container">'
+            if container_marker in content_html:
+                content_html = content_html.replace(container_marker, f"{container_marker}\n        {html_notice}", 1)
+            else:
+                content_html = f"{html_notice}{content_html}"
+
+        return content_md, content_html
+
+    @staticmethod
+    def _apply_snapshot_quality(company_data: dict) -> dict:
+        quality = evaluate_snapshot_quality(company_data)
+        company_data["missing_fields"] = quality["missing_fields"]
+        company_data["missing_core_fields"] = quality["missing_core_fields"]
+        company_data["missing_ratio"] = quality["missing_ratio"]
+        company_data["insufficient_data"] = quality["insufficient_data"]
+        company_data["quality_note"] = quality["quality_note"]
+        company_data["data_quality"] = quality
+        return company_data
 
     @staticmethod
     def _role_display_name(role: AgentRole) -> str:
@@ -510,7 +814,46 @@ class AnalysisService:
 
         return "\n".join(lines)
 
-    async def _update_status(self, analysis_id: str, status: str):
+    async def _persist_task_event(
+        self,
+        analysis_id: str,
+        *,
+        stage: str | None,
+        level: str,
+        event_type: str,
+        message: str,
+        payload: dict | None = None,
+    ) -> None:
+        try:
+            async with AsyncSessionLocal() as db:
+                db.add(
+                    AnalysisEvent(
+                        analysis_id=UUID(analysis_id),
+                        stage=stage,
+                        level=level,
+                        event_type=event_type,
+                        message=message,
+                        payload_json=payload,
+                    )
+                )
+                await db.commit()
+        except Exception as exc:
+            logger.warning(
+                "[Task %s] Failed to persist analysis event (%s/%s): %s",
+                analysis_id,
+                stage,
+                event_type,
+                exc,
+            )
+
+    async def _update_status(
+        self,
+        analysis_id: str,
+        status: str,
+        *,
+        current_stage: str | None = None,
+        error_message: str | None = None,
+    ):
         """
         更新分析记录的状态
         
@@ -539,8 +882,15 @@ class AnalysisService:
             analysis = result.scalar_one_or_none()
             if analysis:
                 analysis.status = status
+                analysis.current_stage = current_stage or status
+                if status != "failed":
+                    analysis.error_message = None
+                    analysis.failed_at = None
                 if status == "completed":
                     analysis.completed_at = datetime.utcnow()
+                if status == "failed":
+                    analysis.error_message = error_message
+                    analysis.failed_at = datetime.utcnow()
                 await db.commit()
 
     async def _get_llm_config(self, user_id: str, api_config_id: str = None) -> dict:

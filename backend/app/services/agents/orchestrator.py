@@ -19,6 +19,7 @@ from app.services.agents.schemas import (
 from app.services.agents.synthesis_agent import SynthesisAgent
 
 StageCallback = Callable[[ProgressStage], Awaitable[None] | None]
+RoleEventCallback = Callable[[AgentRole, AgentRunStatus, dict[str, Any] | None], Awaitable[None] | None]
 
 
 class RoleAgentProtocol(Protocol):
@@ -77,12 +78,14 @@ class AgentOrchestrator:
         synthesis_agent: SynthesisAgentProtocol | None = None,
         llm_config: dict[str, Any] | None = None,
         on_stage: StageCallback | None = None,
+        on_role_event: RoleEventCallback | None = None,
     ):
         self.munger_agent = munger_agent or MungerAgent(llm_config=llm_config)
         self.industry_agent = industry_agent or IndustryAgent(llm_config=llm_config)
         self.audit_agent = audit_agent or AuditAgent(llm_config=llm_config)
         self.synthesis_agent = synthesis_agent or SynthesisAgent(llm_config=llm_config)
         self.on_stage = on_stage
+        self.on_role_event = on_role_event
 
     async def run(self, context: AgentContext) -> OrchestrationResult:
         role_runs: list[AgentRunRecord] = []
@@ -99,8 +102,22 @@ class AgentOrchestrator:
             role_runs.append(run_record)
 
         await self._emit_stage(ProgressStage.RUNNING_SYNTHESIS_AGENT)
-        synthesis_result = await self.synthesis_agent.run_with_results(context, self._collect_success(role_runs))
+        await self._emit_role_event(AgentRole.SYNTHESIS, AgentRunStatus.RUNNING, {})
+        try:
+            synthesis_result = await self.synthesis_agent.run_with_results(context, self._collect_success(role_runs))
+        except Exception as exc:
+            await self._emit_role_event(
+                AgentRole.SYNTHESIS,
+                AgentRunStatus.FAILED,
+                {"error_message": str(exc)},
+            )
+            raise
         synthesis_trace = self._safe_trace(self.synthesis_agent)
+        await self._emit_role_event(
+            AgentRole.SYNTHESIS,
+            AgentRunStatus.COMPLETED,
+            {"final_score": synthesis_result.final_score},
+        )
 
         return OrchestrationResult(
             role_runs=role_runs,
@@ -114,34 +131,66 @@ class AgentOrchestrator:
         agent: RoleAgentProtocol,
         context: AgentContext,
     ) -> AgentRunRecord:
+        await self._emit_role_event(role, AgentRunStatus.RUNNING, {})
         try:
             result = await agent.run(context)
-            return AgentRunRecord(
+            record = AgentRunRecord(
                 role=role,
                 status=AgentRunStatus.COMPLETED,
                 result=result,
                 trace=self._safe_trace(agent),
             )
+            await self._emit_role_event(
+                role,
+                AgentRunStatus.COMPLETED,
+                {"score": result.score},
+            )
+            return record
         except AgentExecutionError as exc:
-            return AgentRunRecord(
+            record = AgentRunRecord(
                 role=role,
                 status=AgentRunStatus.FAILED,
                 error_message=str(exc),
                 trace=self._safe_trace(agent),
             )
+            await self._emit_role_event(
+                role,
+                AgentRunStatus.FAILED,
+                {"error_message": str(exc)},
+            )
+            return record
         except Exception as exc:
-            return AgentRunRecord(
+            record = AgentRunRecord(
                 role=role,
                 status=AgentRunStatus.FAILED,
                 error_message=f"Unexpected {role.value} error: {exc}",
                 trace=self._safe_trace(agent),
             )
+            await self._emit_role_event(
+                role,
+                AgentRunStatus.FAILED,
+                {"error_message": record.error_message},
+            )
+            return record
 
     async def _emit_stage(self, stage: ProgressStage) -> None:
         callback = self.on_stage
         if callback is None:
             return
         maybe_awaitable = callback(stage)
+        if isawaitable(maybe_awaitable):
+            await maybe_awaitable
+
+    async def _emit_role_event(
+        self,
+        role: AgentRole,
+        status: AgentRunStatus,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        callback = self.on_role_event
+        if callback is None:
+            return
+        maybe_awaitable = callback(role, status, payload)
         if isawaitable(maybe_awaitable):
             await maybe_awaitable
 

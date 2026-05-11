@@ -9,7 +9,7 @@
 
 from pydantic import BaseModel, Field
 from datetime import datetime
-from typing import Optional, List
+from typing import Any, Dict, Optional, List
 from uuid import UUID
 
 
@@ -47,8 +47,11 @@ class AnalysisResponse(AnalysisBase):
     id: UUID
     user_id: UUID
     status: str
+    current_stage: Optional[str] = None
+    error_message: Optional[str] = None
     created_at: datetime
     completed_at: Optional[datetime]
+    failed_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -75,6 +78,22 @@ class AnalysisProgress(BaseModel):
     progress_stage: Optional[str] = None
     progress: int
     message: str
+
+
+class AnalysisEventResponse(BaseModel):
+    """分析任务持久化事件记录。"""
+
+    id: UUID
+    analysis_id: UUID
+    stage: Optional[str] = None
+    level: str
+    event_type: str
+    message: str
+    payload_json: Optional[Dict[str, Any]] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
 
 
 class StructuredReportCompany(BaseModel):
@@ -169,9 +188,14 @@ class StructuredReportDataQuality(BaseModel):
     """报告数据完整度和降级信息。"""
 
     is_mock: bool = False
+    insufficient_data: bool = False
     quality_note: Optional[str] = None
     missing_fields: List[str] = Field(default_factory=list)
+    missing_core_fields: List[str] = Field(default_factory=list)
+    missing_ratio: Optional[float] = None
     missing_financial_fields: List[str] = Field(default_factory=list)
+    field_sources: Dict[str, List[str]] = Field(default_factory=dict)
+    errors: List[Dict[str, Any]] = Field(default_factory=list)
     completed_agent_count: int = 0
     failed_agent_roles: List[str] = Field(default_factory=list)
 

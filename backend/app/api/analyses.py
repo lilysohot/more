@@ -18,12 +18,13 @@ from uuid import UUID
 
 from app.database import get_db
 from app.api.deps import get_current_user
-from app.models.user import User, Analysis, Report, AgentRun
+from app.models.user import User, Analysis, Report, AgentRun, AnalysisEvent
 from app.schemas.analysis import (
     AnalysisCreate,
     AnalysisResponse,
     AnalysisDetailResponse,
     AnalysisProgress,
+    AnalysisEventResponse,
     ReportResponse,
     AnalysisListResponse,
 )
@@ -229,9 +230,9 @@ async def get_analysis_progress(
     return {
         "analysis_id": analysis.id,
         "status": analysis.status,
-        "progress_stage": _get_progress_stage(analysis.status),
-        "progress": _get_progress_percentage(analysis.status),
-        "message": _get_progress_message(analysis.status),
+        "progress_stage": analysis.current_stage or _get_progress_stage(analysis.status),
+        "progress": _get_progress_percentage(analysis.current_stage or analysis.status),
+        "message": analysis.error_message or _get_progress_message(analysis.status),
     }
 
 
@@ -301,6 +302,45 @@ async def get_analysis_report(
     )
 
 
+@router.get("/{analysis_id}/events", response_model=list[AnalysisEventResponse])
+async def get_analysis_events(
+    analysis_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    获取分析任务的持久化执行事件。
+
+    参数:
+        analysis_id: 分析记录ID
+        db: 数据库会话
+        current_user: 当前登录用户
+
+    返回:
+        list[AnalysisEventResponse]: 事件列表，按创建时间升序返回
+    """
+    result = await db.execute(
+        select(Analysis).where(
+            Analysis.id == analysis_id,
+            Analysis.user_id == current_user.id,
+        )
+    )
+    analysis = result.scalar_one_or_none()
+
+    if not analysis:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="分析记录不存在",
+        )
+
+    events_result = await db.execute(
+        select(AnalysisEvent)
+        .where(AnalysisEvent.analysis_id == analysis_id)
+        .order_by(AnalysisEvent.created_at.asc())
+    )
+    return events_result.scalars().all()
+
+
 @router.delete("/{analysis_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_analysis(
     analysis_id: UUID,
@@ -351,6 +391,7 @@ def _get_progress_percentage(status: str) -> int:
         "collecting_data": 10,
         "calculating_ratios": 20,
         "building_context": 35,
+        "resolving_llm_config": 45,
         "running_munger_agent": 50,
         "running_industry_agent": 60,
         "running_audit_agent": 70,
@@ -379,6 +420,7 @@ def _get_progress_message(status: str) -> str:
         "collecting_data": "正在采集公司数据...",
         "calculating_ratios": "正在计算财务比率...",
         "building_context": "正在构建分析上下文...",
+        "resolving_llm_config": "正在加载 LLM 配置...",
         "running_munger_agent": "正在执行芒格角色分析...",
         "running_industry_agent": "正在执行产业角色分析...",
         "running_audit_agent": "正在执行审计角色分析...",

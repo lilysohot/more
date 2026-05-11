@@ -52,12 +52,16 @@ class Analysis(Base):
     company_name = Column(String(255), nullable=False)
     stock_code = Column(String(50), nullable=True)
     status = Column(String(50), default="pending")
+    current_stage = Column(String(50), nullable=True)
+    error_message = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     completed_at = Column(DateTime, nullable=True)
+    failed_at = Column(DateTime, nullable=True)
 
     user = relationship("User", back_populates="analyses")
     report = relationship("Report", back_populates="analysis", uselist=False, cascade="all, delete-orphan")
     agent_runs = relationship("AgentRun", back_populates="analysis", cascade="all, delete-orphan")
+    events = relationship("AnalysisEvent", back_populates="analysis", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<Analysis {self.company_name} - {self.status}>"
@@ -102,3 +106,21 @@ class AgentRun(Base):
 
     def __repr__(self):
         return f"<AgentRun {self.analysis_id} {self.role} {self.status}>"
+
+
+class AnalysisEvent(Base):
+    __tablename__ = "analysis_events"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    analysis_id = Column(UUID(as_uuid=True), ForeignKey("analyses.id", ondelete="CASCADE"), nullable=False, index=True)
+    stage = Column(String(50), nullable=True)
+    level = Column(String(20), nullable=False, default="info")
+    event_type = Column(String(50), nullable=False)
+    message = Column(Text, nullable=False)
+    payload_json = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    analysis = relationship("Analysis", back_populates="events")
+
+    def __repr__(self):
+        return f"<AnalysisEvent {self.analysis_id} {self.event_type}>"

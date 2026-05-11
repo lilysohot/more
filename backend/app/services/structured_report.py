@@ -7,6 +7,7 @@ from typing import Any
 
 from app.models.user import AgentRun, Analysis, Report
 from app.services.agents import AgentRole, OrchestrationResult
+from app.services.financial_snapshot import evaluate_snapshot_quality
 
 
 AGENT_TITLES = {
@@ -65,6 +66,7 @@ def build_structured_report_payload(
     synthesis = orchestration_result.synthesis_result.model_dump(mode="json")
     failed_agent_roles = [role.value for role in orchestration_result.failed_roles]
     missing_financial_fields = [field for field in FINANCIAL_FIELDS if _is_missing(financials.get(field))]
+    completed_agent_count = len([agent for agent in agents if agent.get("status") == "completed"])
 
     return _json_safe(
         {
@@ -72,14 +74,12 @@ def build_structured_report_payload(
             "financials": financials,
             "synthesis": synthesis,
             "agents": agents,
-            "data_quality": {
-                "is_mock": False,
-                "quality_note": _build_quality_note(company_data, missing_financial_fields),
-                "missing_fields": company_data.get("missing_fields") or [],
-                "missing_financial_fields": missing_financial_fields,
-                "completed_agent_count": len([agent for agent in agents if agent.get("status") == "completed"]),
-                "failed_agent_roles": failed_agent_roles,
-            },
+            "data_quality": _build_snapshot_quality(
+                company_data=company_data,
+                missing_financial_fields=missing_financial_fields,
+                completed_agent_count=completed_agent_count,
+                failed_agent_roles=failed_agent_roles,
+            ),
         }
     )
 
@@ -201,16 +201,45 @@ def _build_financials(*, company_data: dict[str, Any], financial_ratios: dict[st
     return financials
 
 
+def _build_snapshot_quality(
+    *,
+    company_data: dict[str, Any],
+    missing_financial_fields: list[str],
+    completed_agent_count: int,
+    failed_agent_roles: list[str],
+) -> dict[str, Any]:
+    calculated_quality = evaluate_snapshot_quality(company_data)
+    normalized_quality = dict(company_data.get("data_quality") or {})
+    normalized_quality.setdefault("missing_fields", calculated_quality["missing_fields"])
+    normalized_quality.setdefault("missing_core_fields", calculated_quality["missing_core_fields"])
+    normalized_quality.setdefault("missing_ratio", calculated_quality["missing_ratio"])
+    normalized_quality.setdefault("insufficient_data", calculated_quality["insufficient_data"])
+    normalized_quality.setdefault("quality_note", calculated_quality["quality_note"])
+    normalized_quality.setdefault("field_sources", dict(company_data.get("field_sources") or {}))
+    normalized_quality.setdefault("errors", list(company_data.get("errors") or []))
+    normalized_quality["is_mock"] = False
+    normalized_quality["missing_financial_fields"] = missing_financial_fields
+    normalized_quality["completed_agent_count"] = completed_agent_count
+    normalized_quality["failed_agent_roles"] = failed_agent_roles
+    return normalized_quality
+
+
 def _build_quality_from_records(agent_runs: list[AgentRun], financials: dict[str, Any]) -> dict[str, Any]:
     failed_agent_roles = [record.role for record in agent_runs if record.status != "completed"]
     completed_agent_count = len([record for record in agent_runs if record.status == "completed" and record.role != AgentRole.SYNTHESIS.value])
     missing_financial_fields = [field for field in FINANCIAL_FIELDS if _is_missing(financials.get(field))]
+    calculated_quality = evaluate_snapshot_quality(financials)
 
     return {
         "is_mock": False,
+        "insufficient_data": calculated_quality["insufficient_data"],
+        "missing_core_fields": calculated_quality["missing_core_fields"],
+        "missing_ratio": calculated_quality["missing_ratio"],
         "quality_note": "结构化财务快照不可用，已从历史 AgentRun 降级组装报告。" if missing_financial_fields else None,
-        "missing_fields": [],
+        "missing_fields": calculated_quality["missing_fields"],
         "missing_financial_fields": missing_financial_fields,
+        "field_sources": {},
+        "errors": [],
         "completed_agent_count": completed_agent_count,
         "failed_agent_roles": failed_agent_roles,
     }
@@ -223,13 +252,19 @@ def _normalize_data_quality(
 ) -> dict[str, Any]:
     normalized = dict(data_quality or _build_quality_from_records(agent_runs, financials))
     missing_financial_fields = [field for field in FINANCIAL_FIELDS if _is_missing(financials.get(field))]
+    calculated_quality = evaluate_snapshot_quality(financials)
     normalized["missing_financial_fields"] = missing_financial_fields
-    normalized.setdefault("missing_fields", [])
+    normalized.setdefault("missing_fields", calculated_quality["missing_fields"])
+    normalized.setdefault("missing_core_fields", calculated_quality["missing_core_fields"])
+    normalized.setdefault("missing_ratio", calculated_quality["missing_ratio"])
+    normalized.setdefault("insufficient_data", calculated_quality["insufficient_data"])
+    normalized.setdefault("field_sources", {})
+    normalized.setdefault("errors", [])
     normalized.setdefault("completed_agent_count", 0)
     normalized.setdefault("failed_agent_roles", [])
     normalized.setdefault("is_mock", False)
     if missing_financial_fields and not normalized.get("quality_note"):
-        normalized["quality_note"] = _build_quality_note({}, missing_financial_fields)
+        normalized["quality_note"] = calculated_quality["quality_note"]
     return normalized
 
 
