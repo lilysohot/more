@@ -58,6 +58,7 @@ export interface APIConfigUpdate {
 }
 
 export interface APIConfigTest {
+  model_name?: string;
   provider: string;
   api_key: string;
   base_url?: string;
@@ -118,6 +119,7 @@ export interface Report {
   financials?: StructuredReportFinancials | null;
   synthesis?: StructuredReportSynthesis | null;
   agents?: StructuredReportAgent[];
+  supplements?: StructuredReportSupplement[];
   data_quality?: StructuredReportDataQuality | null;
   original?: StructuredReportOriginal | null;
 }
@@ -130,6 +132,8 @@ export interface StructuredReportCompany {
   industry?: string | null;
   data_source?: string | null;
   data_date?: string | null;
+  provider_data_date?: string | null;
+  supplement_data_date?: string | null;
 }
 
 export interface StructuredReportFinancials {
@@ -202,9 +206,33 @@ export interface StructuredReportDataQuality {
   is_mock?: boolean;
   quality_note?: string | null;
   missing_fields?: string[];
+  missing_core_fields?: string[];
+  missing_ratio?: number | null;
   missing_financial_fields?: string[];
+  field_sources?: Record<string, string[]>;
+  errors?: Record<string, unknown>[];
   completed_agent_count?: number;
   failed_agent_roles?: string[];
+  supplement_warnings?: string[];
+  supplement_not_found?: string[];
+}
+
+export interface StructuredReportSupplementEvidence {
+  url: string;
+  quote: string;
+  date?: string | null;
+}
+
+export interface StructuredReportSupplement {
+  field: string;
+  value?: unknown;
+  unit?: string | null;
+  source_type?: string | null;
+  confidence?: number | null;
+  evidence?: StructuredReportSupplementEvidence[];
+  report_period?: string | null;
+  observed_at?: string | null;
+  can_merge?: boolean;
 }
 
 export interface StructuredReportOriginal {

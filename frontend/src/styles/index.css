@@ -398,15 +398,16 @@ body {
 }
 
 .report-two-column-list,
-.report-chart-grid,
-.report-agent-grid {
+.report-chart-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
 }
 
 .report-agent-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
 }
 
 .report-list-card,
@@ -424,14 +425,65 @@ body {
   display: grid;
   gap: 12px;
   height: 100%;
+  min-width: 0;
 }
 
 .report-evidence-item .ant-space {
+  display: flex;
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
   row-gap: 8px;
 }
 
+.report-evidence-item .ant-space-item {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.report-evidence-item .ant-space-item:first-child {
+  width: 100%;
+}
+
+.report-evidence-item .ant-space-item:first-child .ant-tag {
+  display: block;
+  width: 100%;
+}
+
+.report-evidence-item .ant-tag {
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .report-evidence-item .ant-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
   margin-top: auto;
+}
+
+.report-evidence-item .ant-progress .ant-progress-outer {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-inline-end: 0;
+}
+
+.report-evidence-item .ant-progress .ant-progress-inner {
+  display: block;
+}
+
+.report-evidence-item .ant-progress .ant-progress-text {
+  flex: 0 0 auto;
+  min-width: 3ch;
+  margin-inline-start: 0;
+  font-family: 'IBM Plex Mono', 'JetBrains Mono', monospace;
+  white-space: nowrap;
+  text-align: right;
 }
 
 .report-list-card ol {
@@ -455,6 +507,7 @@ body {
 
 .report-tag-row {
   margin: 8px 0 16px;
+  row-gap: 8px;
 }
 
 .report-profile-stats {
@@ -529,8 +582,18 @@ body {
   gap: 12px;
 }
 
+.report-agent-head > div {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.report-agent-head .ant-tag {
+  flex-shrink: 0;
+}
+
 .report-agent-head h3.ant-typography {
   margin: 4px 0 0;
+  overflow-wrap: anywhere;
 }
 
 .report-agent-score {
@@ -539,6 +602,22 @@ body {
   color: var(--report-copper);
   font-family: 'IBM Plex Mono', 'JetBrains Mono', monospace;
   font-size: 28px;
+}
+
+.report-agent-card .ant-typography,
+.report-agent-card li,
+.report-agent-card .ant-collapse-header-text {
+  overflow-wrap: anywhere;
+}
+
+.report-agent-details,
+.report-detail-list {
+  min-width: 0;
+}
+
+.report-agent-details {
+  display: grid;
+  gap: 12px;
 }
 
 .report-detail-list ul {
@@ -691,10 +770,6 @@ body {
   .report-sidebar-stack {
     position: static;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .report-agent-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

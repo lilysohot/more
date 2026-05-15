@@ -1,17 +1,18 @@
-import { useAPIConfigStore } from '@/store';
+﻿import { useAPIConfigStore } from '@/store';
 import { APIConfig, APIConfigCreate, APIConfigTest, APIConfigUpdate } from '@/types';
 import {
   CheckOutlined,
   DeleteOutlined,
   EditOutlined,
   ExperimentOutlined,
-  PlusOutlined
+  PlusOutlined,
 } from '@ant-design/icons';
 import {
   Alert,
   Button,
   Card,
-  Form, Input,
+  Form,
+  Input,
   message,
   Modal,
   Popconfirm,
@@ -20,16 +21,16 @@ import {
   Spin,
   Switch,
   Table,
-  Tag
+  Tag,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import React, { useEffect, useState } from 'react';
 
 const PROVIDERS = [
-  { value: 'dashscope', label: 'DashScope（通义千问）' },
+  { value: 'dashscope', label: 'DashScope' },
   { value: 'openai', label: 'OpenAI GPT' },
   { value: 'claude', label: 'Claude' },
-  { value: 'custom', label: '自定义' },
+  { value: 'custom', label: 'Custom' },
 ];
 
 type APIConfigFormValues = {
@@ -43,8 +44,14 @@ type APIConfigFormValues = {
 
 const ApiConfigPage: React.FC = () => {
   const {
-    configs, isLoading, fetchConfigs, createConfig,
-    updateConfig, deleteConfig, setDefault, testConfig
+    configs,
+    isLoading,
+    fetchConfigs,
+    createConfig,
+    updateConfig,
+    deleteConfig,
+    setDefault,
+    testConfig,
   } = useAPIConfigStore();
   const [modalVisible, setModalVisible] = useState(false);
   const [testModalVisible, setTestModalVisible] = useState(false);
@@ -129,6 +136,7 @@ const ApiConfigPage: React.FC = () => {
 
   const handleTest = (record: APIConfig) => {
     testForm.setFieldsValue({
+      model_name: record.model_name,
       provider: record.provider,
       api_key: '',
       base_url: record.base_url,
@@ -162,7 +170,7 @@ const ApiConfigPage: React.FC = () => {
       dataIndex: 'provider',
       key: 'provider',
       render: (provider: string) => {
-        const p = PROVIDERS.find(item => item.value === provider);
+        const p = PROVIDERS.find((item) => item.value === provider);
         return p?.label || provider;
       },
     },
@@ -175,15 +183,13 @@ const ApiConfigPage: React.FC = () => {
       title: '模型版本',
       dataIndex: 'model_version',
       key: 'model_version',
-      render: (version: string) => version || '-',
+      render: (version: string | null) => version || '-',
     },
     {
       title: '状态',
       dataIndex: 'is_default',
       key: 'is_default',
-      render: (isDefault: boolean) => (
-        isDefault ? <Tag color="success">默认</Tag> : <Tag>普通</Tag>
-      ),
+      render: (isDefault: boolean) => (isDefault ? <Tag color="success">默认</Tag> : <Tag>普通</Tag>),
     },
     {
       title: '操作',
@@ -191,32 +197,17 @@ const ApiConfigPage: React.FC = () => {
       render: (_, record) => (
         <Space>
           {!record.is_default && (
-            <Button
-              type="link"
-              icon={<CheckOutlined />}
-              onClick={() => handleSetDefault(record.id)}
-            >
+            <Button type="link" icon={<CheckOutlined />} onClick={() => handleSetDefault(record.id)}>
               设为默认
             </Button>
           )}
-          <Button
-            type="link"
-            icon={<ExperimentOutlined />}
-            onClick={() => handleTest(record)}
-          >
+          <Button type="link" icon={<ExperimentOutlined />} onClick={() => handleTest(record)}>
             测试
           </Button>
-          <Button
-            type="link"
-            icon={<EditOutlined />}
-            onClick={() => handleEdit(record)}
-          >
+          <Button type="link" icon={<EditOutlined />} onClick={() => handleEdit(record)}>
             编辑
           </Button>
-          <Popconfirm
-            title="确定要删除此配置吗？"
-            onConfirm={() => handleDelete(record.id)}
-          >
+          <Popconfirm title="确定要删除此配置吗？" onConfirm={() => handleDelete(record.id)}>
             <Button type="link" danger icon={<DeleteOutlined />}>
               删除
             </Button>
@@ -246,7 +237,7 @@ const ApiConfigPage: React.FC = () => {
       >
         <Alert
           message="安全提示"
-          description="您的 API Key 将使用 AES 加密存储，仅在调用时解密。建议定期更换 API Key 以确保安全。"
+          description="API Key 会加密存储。建议填写真实可调用的模型版本；若未填写，测试时会回退尝试使用模型名称。"
           type="info"
           showIcon
           className="mb-4"
@@ -257,7 +248,7 @@ const ApiConfigPage: React.FC = () => {
           dataSource={configs}
           rowKey="id"
           pagination={false}
-          locale={{ emptyText: '暂无 API 配置，请点击"添加新模型"按钮创建' }}
+          locale={{ emptyText: '暂无 API 配置，请先添加模型配置。' }}
         />
       </Card>
 
@@ -268,17 +259,13 @@ const ApiConfigPage: React.FC = () => {
         onOk={() => form.submit()}
         width={600}
       >
-        <Form
-          form={form}
-          layout="vertical"
-          onFinish={handleSubmit}
-        >
+        <Form form={form} layout="vertical" onFinish={handleSubmit}>
           <Form.Item
             name="model_name"
             label="模型名称"
             rules={[{ required: true, message: '请输入模型名称' }]}
           >
-            <Input placeholder="例如：我的 GPT-4" />
+            <Input placeholder="例如：glm-5" />
           </Form.Item>
 
           <Form.Item
@@ -302,7 +289,7 @@ const ApiConfigPage: React.FC = () => {
           </Form.Item>
 
           <Form.Item name="model_version" label="模型版本（可选）">
-            <Input placeholder="例如：gpt-4-turbo-preview" />
+            <Input placeholder="例如：glm-5 / gpt-4.1 / claude-sonnet-4-0" />
           </Form.Item>
 
           <Form.Item name="is_default" label="设为默认" valuePropName="checked">
@@ -318,11 +305,11 @@ const ApiConfigPage: React.FC = () => {
         onOk={() => testForm.submit()}
         confirmLoading={testing}
       >
-        <Form
-          form={testForm}
-          layout="vertical"
-          onFinish={handleTestSubmit}
-        >
+        <Form form={testForm} layout="vertical" onFinish={handleTestSubmit}>
+          <Form.Item name="model_name" label="模型名称">
+            <Input disabled />
+          </Form.Item>
+
           <Form.Item name="provider" label="提供商">
             <Select options={PROVIDERS} disabled />
           </Form.Item>
@@ -340,7 +327,7 @@ const ApiConfigPage: React.FC = () => {
           </Form.Item>
 
           <Form.Item name="model_version" label="模型版本">
-            <Input placeholder="可选" />
+            <Input placeholder="可选；为空时回退使用模型名称" />
           </Form.Item>
         </Form>
 
