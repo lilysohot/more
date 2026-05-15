@@ -45,7 +45,5 @@ def validate_agent_result_in_chinese(result: AgentResult) -> AgentResult:
 
     for index, item in enumerate(result.evidence, 1):
         ensure_chinese_text(item.item, f"evidence[{index}].item")
-        if item.excerpt:
-            ensure_chinese_text(item.excerpt, f"evidence[{index}].excerpt")
 
     return result

@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import List, Optional
+from typing import Any, List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -66,6 +66,24 @@ class SourceItem(BaseModel):
     date: Optional[str] = None
 
 
+class SupplementEvidence(BaseModel):
+    url: str = Field(min_length=1)
+    quote: str = Field(min_length=1)
+    date: Optional[str] = None
+
+
+class SupplementItem(BaseModel):
+    field: str = Field(min_length=1)
+    value: Any = None
+    unit: Optional[str] = None
+    source_type: str = "llm_search"
+    confidence: Optional[float] = Field(default=None, ge=0, le=1)
+    evidence: List[SupplementEvidence] = Field(default_factory=list)
+    report_period: Optional[str] = None
+    observed_at: Optional[str] = None
+    can_merge: bool = False
+
+
 class DataQuality(BaseModel):
     is_mock: bool = False
     missing_fields: List[str] = Field(default_factory=list)
@@ -73,6 +91,8 @@ class DataQuality(BaseModel):
     missing_ratio: Optional[float] = None
     insufficient_data: bool = False
     quality_note: Optional[str] = None
+    supplement_warnings: List[str] = Field(default_factory=list)
+    supplement_not_found: List[str] = Field(default_factory=list)
 
 
 class AgentContext(BaseModel):
@@ -84,6 +104,7 @@ class AgentContext(BaseModel):
     financial_ratios: FinancialRatios = Field(default_factory=FinancialRatios)
     industry_data: IndustryData = Field(default_factory=IndustryData)
     sources: List[SourceItem] = Field(default_factory=list)
+    supplements: List[SupplementItem] = Field(default_factory=list)
     data_quality: DataQuality = Field(default_factory=DataQuality)
 
 

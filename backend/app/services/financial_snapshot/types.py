@@ -49,6 +49,8 @@ class CompanyFinancialSnapshot(TypedDict, total=False):
     close_price: float | None
     data_source: str | None
     data_date: str | None
+    provider_data_date: str | None
+    supplement_data_date: str | None
     source_fields: SourceFields
     field_sources: FieldSources
     missing_fields: list[str]
@@ -56,6 +58,14 @@ class CompanyFinancialSnapshot(TypedDict, total=False):
     quality_note: str | None
     missing_ratio: float | None
     insufficient_data: bool
+    company_profile: str | None
+    business_segments: list[str] | None
+    recent_announcements: list[dict] | None
+    data_gap_explanation: str | None
+    supplements: list[dict]
+    supplement_warnings: list[str]
+    supplement_not_found: list[str]
+    supplement_report_periods: dict[str, str]
     errors: list[ProviderErrorInfo]
 
 

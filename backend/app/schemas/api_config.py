@@ -41,6 +41,7 @@ class APIConfigResponse(BaseModel):
 
 
 class APIConfigTest(BaseModel):
+    model_name: Optional[str] = None
     provider: str
     api_key: str
     base_url: Optional[str] = None

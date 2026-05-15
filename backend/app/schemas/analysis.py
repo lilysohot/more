@@ -106,6 +106,8 @@ class StructuredReportCompany(BaseModel):
     industry: Optional[str] = None
     data_source: Optional[str] = None
     data_date: Optional[str] = None
+    provider_data_date: Optional[str] = None
+    supplement_data_date: Optional[str] = None
 
 
 class StructuredReportFinancials(BaseModel):
@@ -166,6 +168,24 @@ class StructuredReportEvidence(BaseModel):
     confidence: Optional[float] = None
 
 
+class StructuredReportSupplementEvidence(BaseModel):
+    url: str
+    quote: str
+    date: Optional[str] = None
+
+
+class StructuredReportSupplement(BaseModel):
+    field: str
+    value: Optional[Any] = None
+    unit: Optional[str] = None
+    source_type: Optional[str] = None
+    confidence: Optional[float] = None
+    evidence: List[StructuredReportSupplementEvidence] = Field(default_factory=list)
+    report_period: Optional[str] = None
+    observed_at: Optional[str] = None
+    can_merge: bool = False
+
+
 class StructuredReportAgent(BaseModel):
     """单个 Agent 的结构化输出。"""
 
@@ -198,6 +218,8 @@ class StructuredReportDataQuality(BaseModel):
     errors: List[Dict[str, Any]] = Field(default_factory=list)
     completed_agent_count: int = 0
     failed_agent_roles: List[str] = Field(default_factory=list)
+    supplement_warnings: List[str] = Field(default_factory=list)
+    supplement_not_found: List[str] = Field(default_factory=list)
 
 
 class StructuredReportOriginal(BaseModel):
@@ -227,6 +249,7 @@ class ReportResponse(BaseModel):
     financials: Optional[StructuredReportFinancials] = None
     synthesis: Optional[StructuredReportSynthesis] = None
     agents: List[StructuredReportAgent] = Field(default_factory=list)
+    supplements: List[StructuredReportSupplement] = Field(default_factory=list)
     data_quality: Optional[StructuredReportDataQuality] = None
     original: Optional[StructuredReportOriginal] = None
 

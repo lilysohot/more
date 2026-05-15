@@ -275,13 +275,13 @@ class LLMService:
             "messages": [
                 {"role": "user", "content": prompt}
             ],
-            "max_tokens": 4000,
-            "temperature": 0.7,
+            "max_tokens": 2500,
+            "temperature": 0.2,
         }
         
         logger.info(f"DashScope API Payload: {payload}")
         
-        async with httpx.AsyncClient(timeout=120) as client:
+        async with httpx.AsyncClient(timeout=180) as client:
             response = await client.post(url, headers=headers, json=payload)
             logger.info(f"DashScope API Response Status: {response.status_code}")
             response.raise_for_status()
@@ -312,11 +312,11 @@ class LLMService:
             "messages": [
                 {"role": "user", "content": prompt}
             ],
-            "max_tokens": 4000,
-            "temperature": 0.7,
+            "max_tokens": 2500,
+            "temperature": 0.2,
         }
-        
-        async with httpx.AsyncClient(timeout=120) as client:
+
+        async with httpx.AsyncClient(timeout=180) as client:
             response = await client.post(url, headers=headers, json=payload)
             response.raise_for_status()
             data = response.json()
@@ -344,13 +344,13 @@ class LLMService:
         
         payload = {
             "model": self.model_version or "claude-3-opus-20240229",
-            "max_tokens": 4000,
+            "max_tokens": 2500,
             "messages": [
                 {"role": "user", "content": prompt}
             ],
         }
-        
-        async with httpx.AsyncClient(timeout=120) as client:
+
+        async with httpx.AsyncClient(timeout=180) as client:
             response = await client.post(url, headers=headers, json=payload)
             response.raise_for_status()
             data = response.json()

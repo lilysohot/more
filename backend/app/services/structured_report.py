@@ -58,6 +58,8 @@ def build_structured_report_payload(
             "industry": company_data.get("industry"),
             "data_source": company_data.get("data_source"),
             "data_date": company_data.get("data_date"),
+            "provider_data_date": company_data.get("provider_data_date") or company_data.get("data_date"),
+            "supplement_data_date": company_data.get("supplement_data_date"),
         }
     )
 
@@ -74,6 +76,7 @@ def build_structured_report_payload(
             "financials": financials,
             "synthesis": synthesis,
             "agents": agents,
+            "supplements": list(company_data.get("supplements") or []),
             "data_quality": _build_snapshot_quality(
                 company_data=company_data,
                 missing_financial_fields=missing_financial_fields,
@@ -100,6 +103,7 @@ def build_report_response(
     }
     financials = payload.get("financials") or {}
     agents = payload.get("agents") or _build_agents_from_records(agent_runs)
+    supplements = payload.get("supplements") or []
     synthesis = payload.get("synthesis") or _build_synthesis_from_records(agent_runs)
     data_quality = _normalize_data_quality(payload.get("data_quality"), agent_runs, financials)
 
@@ -114,6 +118,7 @@ def build_report_response(
             "financials": financials,
             "synthesis": synthesis,
             "agents": agents,
+            "supplements": supplements,
             "data_quality": data_quality,
             "original": {
                 "content_md": report.content_md,
@@ -217,6 +222,8 @@ def _build_snapshot_quality(
     normalized_quality.setdefault("quality_note", calculated_quality["quality_note"])
     normalized_quality.setdefault("field_sources", dict(company_data.get("field_sources") or {}))
     normalized_quality.setdefault("errors", list(company_data.get("errors") or []))
+    normalized_quality.setdefault("supplement_warnings", list(company_data.get("supplement_warnings") or []))
+    normalized_quality.setdefault("supplement_not_found", list(company_data.get("supplement_not_found") or []))
     normalized_quality["is_mock"] = False
     normalized_quality["missing_financial_fields"] = missing_financial_fields
     normalized_quality["completed_agent_count"] = completed_agent_count
@@ -240,6 +247,8 @@ def _build_quality_from_records(agent_runs: list[AgentRun], financials: dict[str
         "missing_financial_fields": missing_financial_fields,
         "field_sources": {},
         "errors": [],
+        "supplement_warnings": [],
+        "supplement_not_found": [],
         "completed_agent_count": completed_agent_count,
         "failed_agent_roles": failed_agent_roles,
     }
@@ -260,6 +269,8 @@ def _normalize_data_quality(
     normalized.setdefault("insufficient_data", calculated_quality["insufficient_data"])
     normalized.setdefault("field_sources", {})
     normalized.setdefault("errors", [])
+    normalized.setdefault("supplement_warnings", [])
+    normalized.setdefault("supplement_not_found", [])
     normalized.setdefault("completed_agent_count", 0)
     normalized.setdefault("failed_agent_roles", [])
     normalized.setdefault("is_mock", False)

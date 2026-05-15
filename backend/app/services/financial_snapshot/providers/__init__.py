@@ -1,7 +1,8 @@
 """Provider abstractions for normalized financial snapshots."""
 
+from app.services.financial_snapshot.providers.akshare import AkShareProvider
 from app.services.financial_snapshot.providers.base import FinancialDataProvider
 from app.services.financial_snapshot.providers.eastmoney import EastMoneyProvider
 from app.services.financial_snapshot.providers.tushare import TushareProvider
 
-__all__ = ["EastMoneyProvider", "FinancialDataProvider", "TushareProvider"]
+__all__ = ["AkShareProvider", "EastMoneyProvider", "FinancialDataProvider", "TushareProvider"]

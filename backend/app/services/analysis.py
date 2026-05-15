@@ -23,6 +23,8 @@ from app.services.agents import AgentContext, AgentOrchestrator, AgentRole, Agen
 from app.services.agents.orchestrator import OrchestrationResult
 from app.services.data_collector import DataCollector
 from app.services.financial_snapshot import FinancialSnapshotCollector, evaluate_snapshot_quality
+from app.services.financial_snapshot.providers import AkShareProvider
+from app.services.model_supplement import ModelSupplementService
 from app.services.report_generator import ReportGenerator
 from app.services.structured_report import build_structured_report_payload
 from app.utils.encryption import decrypt_api_key
@@ -153,11 +155,12 @@ class AnalysisService:
         )
     """
     
-    def __init__(self, *, snapshot_collector_factory=None):
+    def __init__(self, *, snapshot_collector_factory=None, supplement_service_factory=None):
         """
         初始化分析服务
         """
         self._snapshot_collector_factory = snapshot_collector_factory or FinancialSnapshotCollector
+        self._supplement_service_factory = supplement_service_factory or ModelSupplementService
 
     @staticmethod
     def _looks_like_stock_identifier(value: str | None) -> bool:
@@ -186,7 +189,7 @@ class AnalysisService:
         raw_stock_code = (stock_code or "").strip().upper() or None
 
         if not raw_company_name and not raw_stock_code:
-            raise ValueError("请输入公司名称或股票代码")
+            raise ValueError("????????????")
 
         if raw_stock_code is None and self._looks_like_stock_identifier(raw_company_name):
             raw_stock_code = raw_company_name.upper()
@@ -216,7 +219,18 @@ class AnalysisService:
         if normalized is not None:
             return normalized
 
-        raise ValueError("无法识别输入内容，请输入正确的公司名称或股票代码")
+        try:
+            akshare_result = await AkShareProvider().resolve_stock(
+                company_name=company_name_hint or raw_company_name,
+                stock_code=raw_stock_code,
+            )
+            normalized = self._normalize_resolved_target(akshare_result.get("data"), data_source="akshare")
+            if normalized is not None:
+                return normalized
+        except Exception as e:
+            logger.warning(f"AkShare resolve failed for {raw_company_name} ({raw_stock_code}): {e}")
+
+        raise ValueError("????????????????????????")
 
     async def run_analysis(
         self,
@@ -433,6 +447,61 @@ class AnalysisService:
                     "model_version": llm_config.get("model_version"),
                 },
             )
+            trigger_reasons = self._model_supplement_trigger_reasons(company_data)
+            if trigger_reasons:
+                await self._persist_task_event(
+                    analysis_id,
+                    stage="supplementing_data",
+                    level="info",
+                    event_type="supplement_started",
+                    message="????????????",
+                    payload={
+                        "company_name": company_data.get("company_name"),
+                        "stock_code": company_data.get("stock_code"),
+                        "trigger_reasons": trigger_reasons,
+                    },
+                )
+                try:
+                    company_data = await self._apply_model_supplements(company_data=company_data, llm_config=llm_config)
+                except Exception as exc:
+                    await self._persist_task_event(
+                        analysis_id,
+                        stage="supplementing_data",
+                        level="warning",
+                        event_type="supplement_failed",
+                        message=str(exc) or "????????????????",
+                        payload={"error_type": type(exc).__name__, "trigger_reasons": trigger_reasons},
+                    )
+                else:
+                    await self._persist_task_event(
+                        analysis_id,
+                        stage="supplementing_data",
+                        level="info",
+                        event_type="supplement_completed",
+                        message="??????",
+                        payload={
+                            "trigger_reasons": trigger_reasons,
+                            "supplement_count": len(company_data.get("supplements") or []),
+                            "warning_count": len(company_data.get("supplement_warnings") or []),
+                            "not_found_count": len(company_data.get("supplement_not_found") or []),
+                        },
+                    )
+            else:
+                await self._persist_task_event(
+                    analysis_id,
+                    stage="supplementing_data",
+                    level="info",
+                    event_type="supplement_skipped",
+                    message="???????????????",
+                    payload={"trigger_reasons": []},
+                )
+            agent_context = self._build_agent_context(
+                analysis_id=analysis_id,
+                company_name=company_name,
+                stock_code=stock_code,
+                company_data=company_data,
+                financial_ratios=financial_ratios,
+            )
             await self._persist_task_event(
                 analysis_id,
                 stage="running_multi_agent_orchestration",
@@ -644,7 +713,8 @@ class AnalysisService:
                 "operating_cash_flow": company_data.get("operating_cash_flow"),
             },
             financial_ratios=financial_ratios,
-            sources=[],
+            sources=self._build_context_sources(company_data),
+            supplements=list(company_data.get("supplements") or []),
             data_quality={
                 "is_mock": False,
                 "missing_fields": company_data.get("missing_fields") or [],
@@ -652,8 +722,27 @@ class AnalysisService:
                 "missing_ratio": company_data.get("missing_ratio"),
                 "insufficient_data": company_data.get("insufficient_data", False),
                 "quality_note": company_data.get("quality_note"),
+                "supplement_warnings": list(company_data.get("supplement_warnings") or []),
+                "supplement_not_found": list(company_data.get("supplement_not_found") or []),
             },
         )
+
+    @staticmethod
+    def _build_context_sources(company_data: dict) -> list[dict]:
+        sources: list[dict] = []
+        for supplement in company_data.get("supplements") or []:
+            field = str(supplement.get("field") or "supplement").strip() or "supplement"
+            source_type = str(supplement.get("source_type") or "llm_search").strip() or "llm_search"
+            for evidence in supplement.get("evidence") or []:
+                url = str(evidence.get("url") or field).strip() or field
+                sources.append(
+                    {
+                        "name": url,
+                        "type": source_type,
+                        "date": evidence.get("date"),
+                    }
+                )
+        return sources
 
     async def _collect_company_data(self, *, company_name: str, stock_code: str | None) -> dict:
         """Collect a normalized company snapshot through the multi-provider collector."""
@@ -662,7 +751,33 @@ class AnalysisService:
         company_data["company_name"] = company_data.get("company_name") or company_name
         company_data["stock_code"] = company_data.get("stock_code") or stock_code
         company_data["exchange"] = company_data.get("exchange") or None
+        company_data["provider_data_date"] = company_data.get("provider_data_date") or company_data.get("data_date")
+        company_data["analysis_date"] = company_data.get("analysis_date") or datetime.now().date().isoformat()
         return self._apply_snapshot_quality(company_data)
+
+    async def _apply_model_supplements(self, *, company_data: dict, llm_config: dict) -> dict:
+        supplement_service = self._supplement_service_factory()
+        if not self._should_apply_model_supplements(company_data):
+            return company_data
+        target_fields = supplement_service.build_target_fields(company_data)
+        if not target_fields:
+            return company_data
+
+        supplement_result = await supplement_service.collect(
+            company_data=company_data,
+            target_fields=target_fields,
+            llm_config=llm_config,
+        )
+        merged_company_data = supplement_service.merge_into_company_data(company_data, supplement_result)
+        return self._apply_snapshot_quality(merged_company_data)
+
+    @staticmethod
+    def _should_apply_model_supplements(company_data: dict) -> bool:
+        return ModelSupplementService.should_trigger(company_data)
+
+    @staticmethod
+    def _model_supplement_trigger_reasons(company_data: dict) -> list[str]:
+        return ModelSupplementService.trigger_reasons(company_data)
 
     async def _calculate_financial_ratios(self, company_data: dict) -> dict:
         collector = DataCollector()
@@ -740,7 +855,11 @@ class AnalysisService:
         company_data["missing_ratio"] = quality["missing_ratio"]
         company_data["insufficient_data"] = quality["insufficient_data"]
         company_data["quality_note"] = quality["quality_note"]
-        company_data["data_quality"] = quality
+        data_quality = dict(company_data.get("data_quality") or {})
+        data_quality.update(quality)
+        data_quality["supplement_warnings"] = list(company_data.get("supplement_warnings") or data_quality.get("supplement_warnings") or [])
+        data_quality["supplement_not_found"] = list(company_data.get("supplement_not_found") or data_quality.get("supplement_not_found") or [])
+        company_data["data_quality"] = data_quality
         return company_data
 
     @staticmethod
@@ -921,7 +1040,7 @@ class AnalysisService:
                         "provider": config.provider,
                         "api_key": decrypt_api_key(config.api_key_encrypted),
                         "base_url": config.base_url,
-                        "model_version": config.model_version,
+                        "model_version": config.model_version or config.model_name,
                     }
             
             # 其次使用用户默认配置
@@ -938,7 +1057,7 @@ class AnalysisService:
                     "provider": default_config.provider,
                     "api_key": decrypt_api_key(default_config.api_key_encrypted),
                     "base_url": default_config.base_url,
-                    "model_version": default_config.model_version,
+                    "model_version": default_config.model_version or default_config.model_name,
                 }
         
         # 最后使用系统默认配置
@@ -997,6 +1116,9 @@ class AnalysisService:
 
         for role_run in orchestration_result.role_runs:
             trace = role_run.trace or {}
+            persisted_error = role_run.error_message
+            if persisted_error is None and role_run.status != AgentRunStatus.COMPLETED:
+                persisted_error = trace.get("parse_error")
             records.append(
                 AgentRun(
                     analysis_id=analysis_uuid,
@@ -1010,7 +1132,7 @@ class AnalysisService:
                     structured_output_json=(
                         role_run.result.model_dump(mode="json") if role_run.result is not None else None
                     ),
-                    error_message=role_run.error_message or trace.get("parse_error"),
+                    error_message=persisted_error,
                     latency_ms=None,
                     started_at=None,
                     completed_at=None,

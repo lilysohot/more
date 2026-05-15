@@ -3,6 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Awaitable, Callable, Generic, Optional, TypeVar
 
+import httpx
 from pydantic import BaseModel
 
 from app.services.agents.schemas import AgentContext, AgentRole
@@ -69,6 +70,7 @@ class BaseAgent(ABC, Generic[TResult]):
     prompt_version: str = "v1"
     schema_version: str = "v1"
     parse_retry_limit: int = 1
+    llm_retry_limit: int = 1
 
     def __init__(
         self,
@@ -183,7 +185,7 @@ class BaseAgent(ABC, Generic[TResult]):
             raise AgentConfigurationError(f"Unsupported provider method for provider: {provider}")
 
         try:
-            raw_text = await method(prompt)
+            raw_text = await self._call_llm_with_retry(method, prompt)
         except Exception as exc:
             raise AgentLLMError(self.role, f"{self.role.value} LLM call failed", original_exception=exc) from exc
 
@@ -198,7 +200,7 @@ class BaseAgent(ABC, Generic[TResult]):
             raise AgentConfigurationError("No llm_caller provided")
 
         try:
-            raw_text = await caller(prompt)
+            raw_text = await self._call_llm_with_retry(caller, prompt)
         except Exception as exc:
             raise AgentLLMError(self.role, f"{self.role.value} LLM callable failed", original_exception=exc) from exc
 
@@ -217,3 +219,20 @@ class BaseAgent(ABC, Generic[TResult]):
             raw_output=raw_output,
             original_exception=exc,
         )
+
+    async def _call_llm_with_retry(self, caller: Callable[[str], Awaitable[str]], prompt: str) -> str:
+        attempts = self.llm_retry_limit + 1
+        last_exc: Exception | None = None
+        for attempt in range(attempts):
+            try:
+                return await caller(prompt)
+            except Exception as exc:
+                last_exc = exc
+                if attempt >= self.llm_retry_limit or not self._is_transient_llm_error(exc):
+                    raise
+        assert last_exc is not None
+        raise last_exc
+
+    @staticmethod
+    def _is_transient_llm_error(exc: Exception) -> bool:
+        return isinstance(exc, (httpx.TimeoutException, httpx.TransportError))
